@@ -1,7 +1,7 @@
-'use client'
-
-import { Chat } from '@/components/chat'
-
 export default function Home() {
-  return <Chat />
+  return (
+    <div className="flex min-h-screen items-center justify-center">
+      <h1 className="text-4xl font-bold">Hello World</h1>
+    </div>
+  );
 }
