@@ -26,13 +26,11 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && apt-get autoremove -y \
     && rm -rf /var/lib/apt/lists/*
 
-RUN useradd -m -u 1000 appuser
-
 COPY --from=builder /app/public ./public
-COPY --from=builder --chown=appuser /app/.next/standalone ./
-COPY --from=builder --chown=appuser /app/.next/static ./.next/static
+COPY --from=builder --chown=node /app/.next/standalone ./
+COPY --from=builder --chown=node /app/.next/static ./.next/static
 
-USER appuser
+USER node
 
 EXPOSE 7860
 
