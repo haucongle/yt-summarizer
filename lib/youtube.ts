@@ -1,6 +1,6 @@
 import { YoutubeTranscript } from 'youtube-transcript'
 import { createReadStream } from 'fs'
-import { readdir, stat, mkdtemp, rm, mkdir } from 'fs/promises'
+import { readdir, readFile, stat, mkdtemp, rm, mkdir } from 'fs/promises'
 import { join } from 'path'
 import { tmpdir, homedir } from 'os'
 import { exec } from 'child_process'
@@ -37,6 +37,8 @@ export interface TranscriptResult {
   wordCount: number
 }
 
+// --- Tier 1: YouTube transcript via npm (fastest, ~2s) ---
+
 export async function fetchYouTubeTranscript(
   videoId: string,
 ): Promise<TranscriptResult | null> {
@@ -65,6 +67,53 @@ export async function fetchYouTubeTranscript(
   return null
 }
 
+// --- Tier 2: yt-dlp subtitle extraction (fast, ~3-5s, no audio download) ---
+
+export async function fetchSubtitlesWithYtDlp(
+  videoId: string,
+): Promise<TranscriptResult | null> {
+  if (!(await isCommandAvailable('yt-dlp'))) return null
+
+  const tmpDir = await mkdtemp(join(tmpdir(), 'yt-subs-'))
+
+  try {
+    await execAsync(
+      `yt-dlp --write-auto-sub --sub-lang vi --skip-download --convert-subs srt ` +
+        `-o "${join(tmpDir, 'subs')}" "https://www.youtube.com/watch?v=${videoId}"`,
+      { timeout: 30_000, env: SHELL_ENV },
+    )
+
+    const files = await readdir(tmpDir)
+    const srtFile = files.find((f) => f.endsWith('.srt'))
+    if (!srtFile) return null
+
+    const srtContent = await readFile(join(tmpDir, srtFile), 'utf-8')
+    const text = parseSrt(srtContent)
+    if (!text) return null
+
+    return { text, source: 'youtube-auto', wordCount: text.split(/\s+/).length }
+  } catch {
+    return null
+  } finally {
+    await rm(tmpDir, { recursive: true, force: true }).catch(() => {})
+  }
+}
+
+function parseSrt(srt: string): string {
+  return srt
+    .replace(
+      /\d+\r?\n\d{2}:\d{2}:\d{2}[.,]\d{3} --> \d{2}:\d{2}:\d{2}[.,]\d{3}\r?\n/g,
+      '',
+    )
+    .replace(/<[^>]+>/g, '')
+    .split('\n')
+    .map((l) => l.trim())
+    .filter(Boolean)
+    .join(' ')
+}
+
+// --- Tier 3: Audio download + parallel Whisper (slow, last resort) ---
+
 async function isCommandAvailable(cmd: string): Promise<boolean> {
   try {
     await execAsync(`which ${cmd}`, { env: SHELL_ENV })
@@ -74,15 +123,36 @@ async function isCommandAvailable(cmd: string): Promise<boolean> {
   }
 }
 
+async function parallelMap<T, R>(
+  items: T[],
+  fn: (item: T, index: number) => Promise<R>,
+  concurrency: number,
+): Promise<R[]> {
+  const results: R[] = new Array(items.length)
+  let next = 0
+
+  async function worker() {
+    while (next < items.length) {
+      const i = next++
+      results[i] = await fn(items[i], i)
+    }
+  }
+
+  await Promise.all(
+    Array.from({ length: Math.min(concurrency, items.length) }, () =>
+      worker(),
+    ),
+  )
+  return results
+}
+
 export async function transcribeWithWhisper(
   videoId: string,
   openai: OpenAI,
   onProgress: (message: string) => Promise<void>,
 ): Promise<TranscriptResult> {
   if (!(await isCommandAvailable('yt-dlp'))) {
-    throw new Error(
-      'yt-dlp is not installed. Run: pip install yt-dlp',
-    )
+    throw new Error('yt-dlp is not installed. Run: pip install yt-dlp')
   }
 
   const tmpDir = await mkdtemp(join(tmpdir(), 'yt-summarize-'))
@@ -90,14 +160,16 @@ export async function transcribeWithWhisper(
 
   try {
     await onProgress('Downloading audio...')
+    const dlStart = Date.now()
     await execAsync(
-      `yt-dlp -x --audio-format mp3 --audio-quality 5 -o "${audioPath}" "https://www.youtube.com/watch?v=${videoId}"`,
+      `yt-dlp -x --audio-format mp3 --audio-quality 7 -o "${audioPath}" "https://www.youtube.com/watch?v=${videoId}"`,
       { timeout: 600_000, env: SHELL_ENV },
     )
 
     const fileStat = await stat(audioPath)
     const sizeMB = fileStat.size / (1024 * 1024)
-    await onProgress(`Audio downloaded (${sizeMB.toFixed(1)} MB)`)
+    const dlSec = ((Date.now() - dlStart) / 1000).toFixed(0)
+    await onProgress(`Audio downloaded (${sizeMB.toFixed(1)} MB in ${dlSec}s)`)
 
     let fullText: string
 
@@ -119,26 +191,44 @@ export async function transcribeWithWhisper(
       const chunkDir = join(tmpDir, 'chunks')
       await mkdir(chunkDir)
 
-      await onProgress('Splitting audio into 10-minute chunks...')
+      await onProgress('Splitting audio into 5-minute chunks...')
       await execAsync(
-        `ffmpeg -i "${audioPath}" -f segment -segment_time 600 -c:a libmp3lame -q:a 5 "${chunkDir}/chunk_%03d.mp3"`,
+        `ffmpeg -i "${audioPath}" -f segment -segment_time 300 -c:a libmp3lame -q:a 7 "${chunkDir}/chunk_%03d.mp3"`,
         { timeout: 300_000, env: SHELL_ENV },
       )
 
       const chunks = (await readdir(chunkDir))
         .filter((f) => f.endsWith('.mp3'))
         .sort()
-      const transcripts: string[] = []
 
-      for (let i = 0; i < chunks.length; i++) {
-        await onProgress(`Transcribing chunk ${i + 1}/${chunks.length}...`)
-        const response = await openai.audio.transcriptions.create({
-          file: createReadStream(join(chunkDir, chunks[i])),
-          model: 'whisper-1',
-          language: 'vi',
-        })
-        transcripts.push(response.text)
-      }
+      const CONCURRENCY = 5
+      let completed = 0
+      const txStart = Date.now()
+      await onProgress(
+        `Transcribing ${chunks.length} chunks (${CONCURRENCY} in parallel)...`,
+      )
+
+      const transcripts = await parallelMap(
+        chunks,
+        async (chunk) => {
+          const response = await openai.audio.transcriptions.create({
+            file: createReadStream(join(chunkDir, chunk)),
+            model: 'whisper-1',
+            language: 'vi',
+          })
+          completed++
+          const elapsed = ((Date.now() - txStart) / 1000).toFixed(0)
+          const eta =
+            completed < chunks.length
+              ? ` ~${(((Date.now() - txStart) / completed) * (chunks.length - completed) / 1000).toFixed(0)}s left`
+              : ''
+          await onProgress(
+            `Transcribed ${completed}/${chunks.length} (${elapsed}s${eta})`,
+          )
+          return response.text
+        },
+        CONCURRENCY,
+      )
 
       fullText = transcripts.join('\n\n')
     }

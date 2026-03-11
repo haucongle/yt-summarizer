@@ -3,6 +3,7 @@ import OpenAI from 'openai'
 import {
   extractVideoId,
   fetchYouTubeTranscript,
+  fetchSubtitlesWithYtDlp,
   transcribeWithWhisper,
 } from '@/lib/youtube'
 
@@ -36,21 +37,30 @@ export async function POST(req: NextRequest) {
 
   ;(async () => {
     try {
+      let transcript: { text: string; source: string; wordCount: number } | null = null
+
+      // Tier 1: YouTube transcript via npm (~2s)
       await send({ type: 'status', message: 'Fetching transcript from YouTube...' })
-      const ytResult = await fetchYouTubeTranscript(videoId)
+      transcript = await fetchYouTubeTranscript(videoId)
 
-      let transcript: { text: string; source: string; wordCount: number }
+      // Tier 2: yt-dlp subtitle extraction (~3-5s, no audio download)
+      if (!transcript) {
+        await send({ type: 'status', message: 'Trying yt-dlp subtitle extraction...' })
+        transcript = await fetchSubtitlesWithYtDlp(videoId)
+      }
 
-      if (ytResult) {
+      if (transcript) {
         await send({
           type: 'status',
-          message: `Transcript found (${ytResult.source}, ${ytResult.wordCount.toLocaleString()} words)`,
+          message: `Transcript found (${transcript.source}, ${transcript.wordCount.toLocaleString()} words)`,
         })
-        transcript = ytResult
-      } else {
+      }
+
+      // Tier 3: Audio download + parallel Whisper (slow, last resort)
+      if (!transcript) {
         await send({
           type: 'status',
-          message: 'No YouTube transcript available. Falling back to Whisper transcription...',
+          message: 'No subtitles available. Downloading audio for Whisper transcription...',
         })
         transcript = await transcribeWithWhisper(videoId, openai, async (msg) => {
           await send({ type: 'status', message: msg })
