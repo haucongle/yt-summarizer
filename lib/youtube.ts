@@ -2,12 +2,22 @@ import { YoutubeTranscript } from 'youtube-transcript'
 import { createReadStream } from 'fs'
 import { readdir, stat, mkdtemp, rm, mkdir } from 'fs/promises'
 import { join } from 'path'
-import { tmpdir } from 'os'
+import { tmpdir, homedir } from 'os'
 import { exec } from 'child_process'
 import { promisify } from 'util'
 import type OpenAI from 'openai'
 
 const execAsync = promisify(exec)
+
+const home = homedir()
+const SHELL_ENV = {
+  ...process.env,
+  PATH: [
+    join(home, '.deno/bin'),
+    join(home, '.local/bin'),
+    process.env.PATH,
+  ].join(':'),
+}
 
 export function extractVideoId(url: string): string | null {
   const patterns = [
@@ -57,7 +67,7 @@ export async function fetchYouTubeTranscript(
 
 async function isCommandAvailable(cmd: string): Promise<boolean> {
   try {
-    await execAsync(`which ${cmd}`)
+    await execAsync(`which ${cmd}`, { env: SHELL_ENV })
     return true
   } catch {
     return false
@@ -82,7 +92,7 @@ export async function transcribeWithWhisper(
     await onProgress('Downloading audio...')
     await execAsync(
       `yt-dlp -x --audio-format mp3 --audio-quality 5 -o "${audioPath}" "https://www.youtube.com/watch?v=${videoId}"`,
-      { timeout: 600_000 },
+      { timeout: 600_000, env: SHELL_ENV },
     )
 
     const fileStat = await stat(audioPath)
@@ -112,7 +122,7 @@ export async function transcribeWithWhisper(
       await onProgress('Splitting audio into 10-minute chunks...')
       await execAsync(
         `ffmpeg -i "${audioPath}" -f segment -segment_time 600 -c:a libmp3lame -q:a 5 "${chunkDir}/chunk_%03d.mp3"`,
-        { timeout: 300_000 },
+        { timeout: 300_000, env: SHELL_ENV },
       )
 
       const chunks = (await readdir(chunkDir))
