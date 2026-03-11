@@ -17,13 +17,13 @@ export async function POST(req: NextRequest) {
     return Response.json({ error: 'Invalid YouTube URL' }, { status: 400 })
   }
 
-  const openaiKey = apiKey || process.env.OPENAI_API_KEY
-  if (!openaiKey) {
+  if (!apiKey) {
     return Response.json(
-      { error: 'OpenAI API key is required. Add it in Settings or set OPENAI_API_KEY in .env' },
+      { error: 'OpenAI API key is required. Please enter your API key in Settings.' },
       { status: 400 },
     )
   }
+  const openaiKey = apiKey
 
   const openai = new OpenAI({ apiKey: openaiKey })
   const encoder = new TextEncoder()
@@ -83,26 +83,13 @@ export async function POST(req: NextRequest) {
         messages: [
           {
             role: 'system',
-            content: `Bạn là chuyên gia tóm tắt nội dung video tiếng Việt. Hãy tạo bản tóm tắt chi tiết, có cấu trúc rõ ràng bằng tiếng Việt.
+            content: `Transcript có thể bằng tiếng Anh hoặc tiếng Việt — nhiệm vụ của bạn là dịch (nếu cần) và tóm tắt toàn bộ nội dung sang tiếng Việt.
 
-Cấu trúc:
-
-## Tổng quan
-2-3 câu mô tả tổng quan nội dung video.
-
-## Các điểm chính
-Liệt kê các điểm quan trọng nhất dưới dạng bullet points.
-
-## Nội dung chi tiết
-Tóm tắt chi tiết theo từng phần/chủ đề. Dùng heading phụ nếu cần.
-
-## Kết luận
-Những điều rút ra được và kết luận chính.
+Hãy tóm tắt tự nhiên, rõ ràng. Không cần theo format cố định — tự tổ chức nội dung sao cho dễ đọc và phù hợp nhất với video.
 
 Lưu ý:
 - Viết bằng tiếng Việt
 - Giữ nguyên thuật ngữ chuyên ngành
-- Tóm tắt đầy đủ nhưng súc tích
 - Dùng markdown formatting`,
           },
           {
