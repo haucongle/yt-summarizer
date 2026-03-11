@@ -10,13 +10,14 @@ import type OpenAI from 'openai'
 const execAsync = promisify(exec)
 
 const home = homedir()
+const PATH_SEP = process.platform === 'win32' ? ';' : ':'
 const SHELL_ENV = {
   ...process.env,
   PATH: [
     join(home, '.deno/bin'),
     join(home, '.local/bin'),
     process.env.PATH,
-  ].join(':'),
+  ].join(PATH_SEP),
 }
 
 export function extractVideoId(url: string): string | null {
@@ -115,8 +116,9 @@ function parseSrt(srt: string): string {
 // --- Tier 3: Audio download + parallel Whisper (slow, last resort) ---
 
 async function isCommandAvailable(cmd: string): Promise<boolean> {
+  const check = process.platform === 'win32' ? 'where' : 'which'
   try {
-    await execAsync(`which ${cmd}`, { env: SHELL_ENV })
+    await execAsync(`${check} ${cmd}`, { env: SHELL_ENV })
     return true
   } catch {
     return false
