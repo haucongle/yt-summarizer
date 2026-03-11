@@ -15,7 +15,7 @@ FROM base AS runner
 WORKDIR /app
 
 ENV NODE_ENV=production
-ENV PORT=3000
+ENV PORT=7860
 ENV HOSTNAME=0.0.0.0
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
@@ -26,15 +26,14 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && apt-get autoremove -y \
     && rm -rf /var/lib/apt/lists/*
 
-RUN addgroup --system --gid 1001 nodejs && \
-    adduser --system --uid 1001 nextjs
+RUN useradd -m -u 1000 appuser
 
 COPY --from=builder /app/public ./public
-COPY --from=builder --chown=nextjs:nodejs /app/.next/standalone ./
-COPY --from=builder --chown=nextjs:nodejs /app/.next/static ./.next/static
+COPY --from=builder --chown=appuser /app/.next/standalone ./
+COPY --from=builder --chown=appuser /app/.next/static ./.next/static
 
-USER nextjs
+USER appuser
 
-EXPOSE 3000
+EXPOSE 7860
 
 CMD ["node", "server.js"]
