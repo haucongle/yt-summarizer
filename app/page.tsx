@@ -16,6 +16,14 @@ function extractVideoId(url: string): string | null {
   return null
 }
 
+function formatElapsed(ms: number): string {
+  const s = Math.floor(ms / 1000)
+  if (s < 60) return `${s}s`
+  const m = Math.floor(s / 60)
+  const rem = s % 60
+  return `${m}m ${rem.toString().padStart(2, '0')}s`
+}
+
 export default function Home() {
   const [url, setUrl] = useState('')
   const [apiKey, setApiKey] = useState('')
@@ -29,8 +37,12 @@ export default function Home() {
     wordCount: number
   } | null>(null)
   const [copied, setCopied] = useState(false)
+  const [elapsed, setElapsed] = useState(0)
+  const [totalTime, setTotalTime] = useState(0)
   const summaryRef = useRef<HTMLDivElement>(null)
   const abortRef = useRef<AbortController | null>(null)
+  const startTimeRef = useRef(0)
+  const timerRef = useRef<ReturnType<typeof setInterval> | null>(null)
 
   const videoId = extractVideoId(url)
 
@@ -49,6 +61,29 @@ export default function Home() {
     }
   }, [summary])
 
+  const startTimer = () => {
+    startTimeRef.current = Date.now()
+    setElapsed(0)
+    setTotalTime(0)
+    timerRef.current = setInterval(() => {
+      setElapsed(Date.now() - startTimeRef.current)
+    }, 1000)
+  }
+
+  const stopTimer = () => {
+    if (timerRef.current) {
+      clearInterval(timerRef.current)
+      timerRef.current = null
+    }
+    setTotalTime(Date.now() - startTimeRef.current)
+  }
+
+  useEffect(() => {
+    return () => {
+      if (timerRef.current) clearInterval(timerRef.current)
+    }
+  }, [])
+
   const handleSubmit = useCallback(async () => {
     if (!url || loading) return
 
@@ -57,6 +92,7 @@ export default function Home() {
     setSummary('')
     setError('')
     setTranscriptInfo(null)
+    startTimer()
 
     abortRef.current = new AbortController()
 
@@ -121,6 +157,7 @@ export default function Home() {
         setError(err.message)
       }
     } finally {
+      stopTimer()
       setLoading(false)
       abortRef.current = null
     }
@@ -128,6 +165,7 @@ export default function Home() {
 
   const handleStop = () => {
     abortRef.current?.abort()
+    stopTimer()
     setLoading(false)
     setStatus('')
   }
@@ -208,10 +246,19 @@ export default function Home() {
           </div>
         )}
 
-        {status && (
-          <div className="mt-4 flex items-center gap-2 text-sm text-foreground/60">
-            <div className="h-4 w-4 animate-spin rounded-full border-2 border-foreground/20 border-t-foreground/60" />
-            {status}
+        {(status || loading) && (
+          <div className="mt-4 flex items-center justify-between">
+            <div className="flex items-center gap-2 text-sm text-foreground/60">
+              {loading && (
+                <div className="h-4 w-4 animate-spin rounded-full border-2 border-foreground/20 border-t-foreground/60" />
+              )}
+              {status || 'Processing...'}
+            </div>
+            {loading && elapsed > 0 && (
+              <span className="font-mono text-xs text-foreground/40">
+                {formatElapsed(elapsed)}
+              </span>
+            )}
           </div>
         )}
 
@@ -239,7 +286,14 @@ export default function Home() {
         {summary && (
           <div className="mt-6">
             <div className="mb-3 flex items-center justify-between">
-              <h2 className="text-lg font-semibold">Summary</h2>
+              <div className="flex items-center gap-3">
+                <h2 className="text-lg font-semibold">Summary</h2>
+                {totalTime > 0 && (
+                  <span className="text-xs text-foreground/40">
+                    completed in {formatElapsed(totalTime)}
+                  </span>
+                )}
+              </div>
               <button
                 onClick={handleCopy}
                 className="text-xs text-foreground/40 hover:text-foreground/60 transition-colors"
