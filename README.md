@@ -1,4 +1,15 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+---
+title: YT Summarizer
+emoji: 📺
+colorFrom: blue
+colorTo: purple
+sdk: docker
+app_port: 7860
+---
+
+# YT Summarizer
+
+Paste a YouTube link, get a Vietnamese summary powered by GPT-4o.
 
 ## Getting Started
 
