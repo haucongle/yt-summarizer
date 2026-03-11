@@ -79,7 +79,7 @@ export async function fetchSubtitlesWithYtDlp(
 
   try {
     await execAsync(
-      `yt-dlp --write-auto-sub --sub-lang vi --skip-download --convert-subs srt ` +
+      `yt-dlp --remote-components ejs:github --write-auto-sub --sub-lang vi --skip-download --convert-subs srt ` +
         `-o "${join(tmpDir, 'subs')}" "https://www.youtube.com/watch?v=${videoId}"`,
       { timeout: 30_000, env: SHELL_ENV },
     )
@@ -164,7 +164,7 @@ export async function transcribeWithWhisper(
     await onProgress('Downloading audio...')
     const dlStart = Date.now()
     await execAsync(
-      `yt-dlp -x --audio-format mp3 --audio-quality 7 -o "${audioPath}" "https://www.youtube.com/watch?v=${videoId}"`,
+      `yt-dlp --remote-components ejs:github -x --audio-format mp3 --audio-quality 7 -o "${audioPath}" "https://www.youtube.com/watch?v=${videoId}"`,
       { timeout: 600_000, env: SHELL_ENV },
     )
 
