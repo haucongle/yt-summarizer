@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, afterEach } from 'vitest'
+import { describe, it, expect, jest, afterEach } from 'bun:test'
 import {
   formatElapsed,
   formatDuration,
@@ -111,7 +111,7 @@ describe('formatViews', () => {
 
 describe('formatUploadDate', () => {
   afterEach(() => {
-    vi.useRealTimers()
+    jest.useRealTimers()
   })
 
   it('returns empty string for null', () => {
@@ -128,35 +128,35 @@ describe('formatUploadDate', () => {
   })
 
   it('returns Today for current date', () => {
-    vi.useFakeTimers()
-    vi.setSystemTime(new Date('2025-06-15T12:00:00'))
+    jest.useFakeTimers()
+    jest.setSystemTime(new Date('2025-06-15T12:00:00'))
     expect(formatUploadDate('20250615')).toBe('Today')
   })
 
   it('returns Yesterday for one day ago', () => {
-    vi.useFakeTimers()
-    vi.setSystemTime(new Date('2025-06-15T12:00:00'))
+    jest.useFakeTimers()
+    jest.setSystemTime(new Date('2025-06-15T12:00:00'))
     expect(formatUploadDate('20250614')).toBe('Yesterday')
   })
 
   it('returns days ago for 2-6 days', () => {
-    vi.useFakeTimers()
-    vi.setSystemTime(new Date('2025-06-15T12:00:00'))
+    jest.useFakeTimers()
+    jest.setSystemTime(new Date('2025-06-15T12:00:00'))
     expect(formatUploadDate('20250613')).toBe('2 days ago')
     expect(formatUploadDate('20250610')).toBe('5 days ago')
   })
 
   it('returns weeks ago for 7-29 days', () => {
-    vi.useFakeTimers()
-    vi.setSystemTime(new Date('2025-06-15T12:00:00'))
+    jest.useFakeTimers()
+    jest.setSystemTime(new Date('2025-06-15T12:00:00'))
     expect(formatUploadDate('20250608')).toBe('1 weeks ago')
     expect(formatUploadDate('20250601')).toBe('2 weeks ago')
     expect(formatUploadDate('20250518')).toBe('4 weeks ago')
   })
 
   it('returns formatted date for 30+ days ago', () => {
-    vi.useFakeTimers()
-    vi.setSystemTime(new Date('2025-06-15T12:00:00'))
+    jest.useFakeTimers()
+    jest.setSystemTime(new Date('2025-06-15T12:00:00'))
     expect(formatUploadDate('20250101')).toBe('01/01/2025')
     expect(formatUploadDate('20241225')).toBe('25/12/2024')
   })
