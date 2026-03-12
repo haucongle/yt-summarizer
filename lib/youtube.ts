@@ -100,7 +100,7 @@ export async function fetchSubtitlesWithYtDlp(
   }
 }
 
-function parseSrt(srt: string): string {
+export function parseSrt(srt: string): string {
   return srt
     .replace(
       /\d+\r?\n\d{2}:\d{2}:\d{2}[.,]\d{3} --> \d{2}:\d{2}:\d{2}[.,]\d{3}\r?\n/g,
