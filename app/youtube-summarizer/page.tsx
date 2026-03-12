@@ -4,7 +4,7 @@ import { useState, useEffect, useRef, useCallback } from 'react'
 import Link from 'next/link'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
-import { extractVideoId } from '@/lib/youtube'
+import { extractVideoId } from '@/lib/youtube-utils'
 import { formatElapsed, formatDuration, formatViews, formatUploadDate } from '@/lib/formatters'
 
 interface Video {
