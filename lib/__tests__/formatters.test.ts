@@ -26,9 +26,17 @@ describe('formatElapsed', () => {
     expect(formatElapsed(69000)).toBe('1m 09s')
   })
 
-  it('handles large values', () => {
+  it('returns 59m 59s at the boundary before 1 hour', () => {
+    expect(formatElapsed(3599000)).toBe('59m 59s')
+  })
+
+  it('returns 60m 00s at exactly 3600 seconds', () => {
     expect(formatElapsed(3600000)).toBe('60m 00s')
+  })
+
+  it('handles large values beyond 1 hour', () => {
     expect(formatElapsed(3661000)).toBe('61m 01s')
+    expect(formatElapsed(7200000)).toBe('120m 00s')
   })
 })
 
