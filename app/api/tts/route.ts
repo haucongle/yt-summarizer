@@ -5,7 +5,7 @@ export const maxDuration = 120
 
 const MAX_CHUNK_LENGTH = 4000
 
-function splitTextIntoChunks(text: string): string[] {
+export function splitTextIntoChunks(text: string): string[] {
   const stripped = text
     .replace(/#{1,6}\s/g, '')
     .replace(/\*{1,2}([^*]+)\*{1,2}/g, '$1')

@@ -6,6 +6,9 @@ import { tmpdir, homedir } from 'os'
 import { exec } from 'child_process'
 import { promisify } from 'util'
 import type OpenAI from 'openai'
+import { extractVideoId, parseSrt } from './youtube-utils'
+
+export { extractVideoId, parseSrt }
 
 const execAsync = promisify(exec)
 
@@ -18,18 +21,6 @@ const SHELL_ENV = {
     join(home, '.local/bin'),
     process.env.PATH,
   ].join(PATH_SEP),
-}
-
-export function extractVideoId(url: string): string | null {
-  const patterns = [
-    /(?:youtube\.com\/watch\?v=|youtu\.be\/|youtube\.com\/embed\/|youtube\.com\/shorts\/)([^&#\s?]+)/,
-    /^([a-zA-Z0-9_-]{11})$/,
-  ]
-  for (const pattern of patterns) {
-    const match = url.match(pattern)
-    if (match) return match[1]
-  }
-  return null
 }
 
 export interface TranscriptResult {
@@ -98,19 +89,6 @@ export async function fetchSubtitlesWithYtDlp(
   } finally {
     await rm(tmpDir, { recursive: true, force: true }).catch(() => {})
   }
-}
-
-function parseSrt(srt: string): string {
-  return srt
-    .replace(
-      /\d+\r?\n\d{2}:\d{2}:\d{2}[.,]\d{3} --> \d{2}:\d{2}:\d{2}[.,]\d{3}\r?\n/g,
-      '',
-    )
-    .replace(/<[^>]+>/g, '')
-    .split('\n')
-    .map((l) => l.trim())
-    .filter(Boolean)
-    .join(' ')
 }
 
 // --- Tier 3: Audio download + parallel Whisper (slow, last resort) ---
