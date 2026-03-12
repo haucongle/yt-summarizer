@@ -69,17 +69,17 @@ export async function POST(req: NextRequest) {
   const chunks = splitTextIntoChunks(text)
 
   try {
-    const audioBuffers: ArrayBuffer[] = []
-
-    for (const chunk of chunks) {
-      const response = await openai.audio.speech.create({
-        model: 'tts-1',
-        voice: 'nova',
-        input: chunk,
-        response_format: 'mp3',
-      })
-      audioBuffers.push(await response.arrayBuffer())
-    }
+    const audioBuffers: ArrayBuffer[] = await Promise.all(
+      chunks.map(async (chunk) => {
+        const response = await openai.audio.speech.create({
+          model: 'tts-1',
+          voice: 'nova',
+          input: chunk,
+          response_format: 'mp3',
+        })
+        return response.arrayBuffer()
+      }),
+    )
 
     const totalLength = audioBuffers.reduce((sum, buf) => sum + buf.byteLength, 0)
     const combined = new Uint8Array(totalLength)

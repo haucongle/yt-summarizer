@@ -89,6 +89,8 @@ export default function Home() {
   const [channels, setChannels] = useState<ChannelData[]>([])
   const [feedLoading, setFeedLoading] = useState(true)
   const [ttsState, setTtsState] = useState<'idle' | 'loading' | 'playing' | 'paused'>('idle')
+  const [playbackSpeed, setPlaybackSpeed] = useState(1.0)
+  const [feedOpen, setFeedOpen] = useState(false)
   const summaryRef = useRef<HTMLDivElement>(null)
   const abortRef = useRef<AbortController | null>(null)
   const startTimeRef = useRef(0)
@@ -277,6 +279,7 @@ export default function Home() {
       }
 
       const audio = new Audio(url)
+      audio.playbackRate = playbackSpeed
       audioRef.current = audio
 
       audio.onended = () => {
@@ -315,6 +318,10 @@ export default function Home() {
   }
 
   useEffect(() => {
+    if (audioRef.current) audioRef.current.playbackRate = playbackSpeed
+  }, [playbackSpeed])
+
+  useEffect(() => {
     return () => {
       if (audioRef.current) {
         audioRef.current.pause()
@@ -335,77 +342,91 @@ export default function Home() {
           </p>
         </div>
 
-        {!summary && !loading && (
-          <div className="mb-6 grid grid-cols-1 gap-4 sm:grid-cols-2">
-            {feedLoading
-              ? [0, 1].map((col) => (
-                  <div key={col} className="space-y-2">
-                    <div className="h-4 w-40 animate-pulse rounded bg-foreground/10" />
-                    {[0, 1, 2, 3, 4].map((i) => (
-                      <div
-                        key={i}
-                        className="flex gap-3 rounded-lg border border-foreground/10 p-2.5"
-                      >
-                        <div className="h-[72px] w-[128px] shrink-0 animate-pulse rounded bg-foreground/10" />
-                        <div className="flex flex-1 flex-col justify-between py-0.5">
-                          <div className="h-3.5 w-full animate-pulse rounded bg-foreground/8" />
-                          <div className="h-3.5 w-3/4 animate-pulse rounded bg-foreground/8" />
-                          <div className="h-3 w-1/2 animate-pulse rounded bg-foreground/5" />
+        <div className="mb-6">
+          <button
+            onClick={() => setFeedOpen(!feedOpen)}
+            className="flex items-center gap-2 text-xs font-medium text-foreground/50 hover:text-foreground/70 transition-colors"
+          >
+            <span className={`transition-transform ${feedOpen ? 'rotate-90' : ''}`}>▶</span>
+            Favorite Channels
+            {!feedLoading && (
+              <span className="text-foreground/30">
+                ({channels.reduce((n, ch) => n + ch.videos.length, 0)} videos)
+              </span>
+            )}
+          </button>
+          {feedOpen && (
+            <div className="mt-3 grid grid-cols-1 gap-4 sm:grid-cols-2">
+              {feedLoading
+                ? [0, 1].map((col) => (
+                    <div key={col} className="space-y-2">
+                      <div className="h-4 w-40 animate-pulse rounded bg-foreground/10" />
+                      {[0, 1, 2, 3, 4].map((i) => (
+                        <div
+                          key={i}
+                          className="flex gap-3 rounded-lg border border-foreground/10 p-2.5"
+                        >
+                          <div className="h-[72px] w-[128px] shrink-0 animate-pulse rounded bg-foreground/10" />
+                          <div className="flex flex-1 flex-col justify-between py-0.5">
+                            <div className="h-3.5 w-full animate-pulse rounded bg-foreground/8" />
+                            <div className="h-3.5 w-3/4 animate-pulse rounded bg-foreground/8" />
+                            <div className="h-3 w-1/2 animate-pulse rounded bg-foreground/5" />
+                          </div>
                         </div>
-                      </div>
-                    ))}
-                  </div>
-                ))
-              : channels.map((ch) =>
-                  ch.videos.length > 0 ? (
-                    <div key={ch.name} className="flex flex-col overflow-hidden">
-                      <h2 className="sticky top-0 z-10 bg-background pb-2 text-xs font-semibold uppercase tracking-wider text-foreground/40">
-                        {ch.name}
-                      </h2>
-                      <div className="space-y-1.5 overflow-y-auto max-h-[70vh] pr-1">
-                        {ch.videos.map((video) => (
-                          <button
-                            key={video.id}
-                            onClick={() => setUrl(video.url)}
-                            className="group flex w-full gap-3 rounded-lg border border-foreground/10 bg-foreground/[0.03] p-2 text-left transition-all hover:border-foreground/25 hover:bg-foreground/[0.07]"
-                          >
-                            <div className="relative shrink-0">
-                              <img
-                                src={video.thumbnail}
-                                alt={video.title}
-                                className="h-[72px] w-[128px] rounded object-cover"
-                              />
-                              {video.duration && (
-                                <span className="absolute bottom-0.5 right-0.5 rounded bg-black/80 px-1 py-px text-[10px] font-mono text-white/90">
-                                  {formatDuration(video.duration)}
-                                </span>
-                              )}
-                            </div>
-                            <div className="flex min-w-0 flex-1 flex-col justify-between py-px">
-                              <p className="text-[13px] leading-tight font-medium text-foreground/80 line-clamp-2 group-hover:text-foreground">
-                                {video.title}
-                              </p>
-                              <div className="mt-1 flex flex-wrap items-center gap-x-1.5 text-[11px] text-foreground/35">
-                                {video.viewCount != null && (
-                                  <span>{formatViews(video.viewCount)}</span>
-                                )}
-                                {video.viewCount != null &&
-                                  video.uploadDate && <span>·</span>}
-                                {video.uploadDate && (
-                                  <span>
-                                    {formatUploadDate(video.uploadDate)}
+                      ))}
+                    </div>
+                  ))
+                : channels.map((ch) =>
+                    ch.videos.length > 0 ? (
+                      <div key={ch.name} className="flex flex-col overflow-hidden">
+                        <h2 className="sticky top-0 z-10 bg-background pb-2 text-xs font-semibold uppercase tracking-wider text-foreground/40">
+                          {ch.name}
+                        </h2>
+                        <div className="space-y-1.5 overflow-y-auto max-h-[70vh] pr-1">
+                          {ch.videos.map((video) => (
+                            <button
+                              key={video.id}
+                              onClick={() => setUrl(video.url)}
+                              className="group flex w-full gap-3 rounded-lg border border-foreground/10 bg-foreground/[0.03] p-2 text-left transition-all hover:border-foreground/25 hover:bg-foreground/[0.07]"
+                            >
+                              <div className="relative shrink-0">
+                                <img
+                                  src={video.thumbnail}
+                                  alt={video.title}
+                                  className="h-[72px] w-[128px] rounded object-cover"
+                                />
+                                {video.duration && (
+                                  <span className="absolute bottom-0.5 right-0.5 rounded bg-black/80 px-1 py-px text-[10px] font-mono text-white/90">
+                                    {formatDuration(video.duration)}
                                   </span>
                                 )}
                               </div>
-                            </div>
-                          </button>
-                        ))}
+                              <div className="flex min-w-0 flex-1 flex-col justify-between py-px">
+                                <p className="text-[13px] leading-tight font-medium text-foreground/80 line-clamp-2 group-hover:text-foreground">
+                                  {video.title}
+                                </p>
+                                <div className="mt-1 flex flex-wrap items-center gap-x-1.5 text-[11px] text-foreground/35">
+                                  {video.viewCount != null && (
+                                    <span>{formatViews(video.viewCount)}</span>
+                                  )}
+                                  {video.viewCount != null &&
+                                    video.uploadDate && <span>·</span>}
+                                  {video.uploadDate && (
+                                    <span>
+                                      {formatUploadDate(video.uploadDate)}
+                                    </span>
+                                  )}
+                                </div>
+                              </div>
+                            </button>
+                          ))}
+                        </div>
                       </div>
-                    </div>
-                  ) : null,
-                )}
-          </div>
-        )}
+                    ) : null,
+                  )}
+            </div>
+          )}
+        </div>
 
         <div className="flex gap-2">
           <input
@@ -486,13 +507,31 @@ export default function Home() {
               </div>
               <div className="flex items-center gap-3">
                 {ttsState !== 'idle' && (
-                  <button
-                    onClick={handleTtsStop}
-                    className="text-xs text-red-400 hover:text-red-300 transition-colors"
-                    aria-label="Stop audio"
-                  >
-                    Stop
-                  </button>
+                  <>
+                    <button
+                      onClick={handleTtsStop}
+                      className="text-xs text-red-400 hover:text-red-300 transition-colors"
+                      aria-label="Stop audio"
+                    >
+                      Stop
+                    </button>
+                    <div className="flex items-center gap-1.5">
+                      {[1, 1.25, 1.5, 2].map((s) => (
+                        <button
+                          key={s}
+                          onClick={() => setPlaybackSpeed(s)}
+                          className={`rounded px-1.5 py-0.5 text-[10px] font-mono transition-colors ${
+                            playbackSpeed === s
+                              ? 'bg-foreground/15 text-foreground/80'
+                              : 'text-foreground/30 hover:text-foreground/50'
+                          }`}
+                          aria-label={`Playback speed ${s}x`}
+                        >
+                          {s}x
+                        </button>
+                      ))}
+                    </div>
+                  </>
                 )}
                 <button
                   onClick={handleTts}
