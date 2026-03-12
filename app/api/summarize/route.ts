@@ -10,22 +10,22 @@ import {
 export const maxDuration = 300
 
 export async function POST(req: NextRequest) {
-  const { url, apiKey } = await req.json()
+  const { url } = await req.json()
 
   const videoId = extractVideoId(url)
   if (!videoId) {
     return Response.json({ error: 'Invalid YouTube URL' }, { status: 400 })
   }
 
+  const apiKey = process.env.OPENAI_API_KEY
   if (!apiKey) {
     return Response.json(
-      { error: 'OpenAI API key is required. Please enter your API key in Settings.' },
-      { status: 400 },
+      { error: 'OPENAI_API_KEY is not configured on the server.' },
+      { status: 500 },
     )
   }
-  const openaiKey = apiKey
 
-  const openai = new OpenAI({ apiKey: openaiKey })
+  const openai = new OpenAI({ apiKey })
   const encoder = new TextEncoder()
 
   const transform = new TransformStream()
@@ -71,19 +71,17 @@ export async function POST(req: NextRequest) {
         })
       }
 
-      await send({ type: 'status', message: 'Generating summary with GPT-4o...' })
+      await send({ type: 'status', message: 'Generating summary with GPT-5.4...' })
       await send({
         type: 'transcript_info',
         source: transcript.source,
         wordCount: transcript.wordCount,
       })
 
-      const completion = await openai.chat.completions.create({
-        model: 'gpt-4o',
-        messages: [
-          {
-            role: 'system',
-            content: `Transcript có thể bằng tiếng Anh hoặc tiếng Việt — nhiệm vụ của bạn là dịch (nếu cần) và tóm tắt toàn bộ nội dung sang tiếng Việt.
+      const stream = await openai.responses.create({
+        model: 'gpt-5.4',
+        reasoning: { effort: 'none' },
+        instructions: `Transcript có thể bằng tiếng Anh hoặc tiếng Việt — nhiệm vụ của bạn là dịch (nếu cần) và tóm tắt toàn bộ nội dung sang tiếng Việt.
 
 Hãy tóm tắt tự nhiên, rõ ràng. Không cần theo format cố định — tự tổ chức nội dung sao cho dễ đọc và phù hợp nhất với video.
 
@@ -91,20 +89,14 @@ Lưu ý:
 - Viết bằng tiếng Việt
 - Giữ nguyên thuật ngữ chuyên ngành
 - Dùng markdown formatting`,
-          },
-          {
-            role: 'user',
-            content: `Hãy tóm tắt transcript video sau:\n\n${transcript.text}`,
-          },
-        ],
+        input: `Hãy tóm tắt transcript video sau:\n\n${transcript.text}`,
         stream: true,
-        max_tokens: 4096,
+        max_output_tokens: 16384,
       })
 
-      for await (const chunk of completion) {
-        const content = chunk.choices[0]?.delta?.content
-        if (content) {
-          await send({ type: 'content', text: content })
+      for await (const event of stream) {
+        if (event.type === 'response.output_text.delta') {
+          await send({ type: 'content', text: event.delta })
         }
       }
 

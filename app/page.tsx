@@ -24,10 +24,57 @@ function formatElapsed(ms: number): string {
   return `${m}m ${rem.toString().padStart(2, '0')}s`
 }
 
+function formatDuration(seconds: number | null): string {
+  if (!seconds) return ''
+  const h = Math.floor(seconds / 3600)
+  const m = Math.floor((seconds % 3600) / 60)
+  const s = seconds % 60
+  if (h > 0) return `${h}:${m.toString().padStart(2, '0')}:${s.toString().padStart(2, '0')}`
+  return `${m}:${s.toString().padStart(2, '0')}`
+}
+
+function formatViews(count: number | null): string {
+  if (!count) return ''
+  if (count >= 1_000_000) return `${(count / 1_000_000).toFixed(1)}M views`
+  if (count >= 1_000) return `${(count / 1_000).toFixed(1)}K views`
+  return `${count} views`
+}
+
+function formatUploadDate(dateStr: string | null): string {
+  if (!dateStr || dateStr.length !== 8) return ''
+  const y = dateStr.slice(0, 4)
+  const m = dateStr.slice(4, 6)
+  const d = dateStr.slice(6, 8)
+  const date = new Date(`${y}-${m}-${d}`)
+  const now = new Date()
+  const diffMs = now.getTime() - date.getTime()
+  const diffDays = Math.floor(diffMs / (1000 * 60 * 60 * 24))
+  if (diffDays === 0) return 'Today'
+  if (diffDays === 1) return 'Yesterday'
+  if (diffDays < 7) return `${diffDays} days ago`
+  if (diffDays < 30) return `${Math.floor(diffDays / 7)} weeks ago`
+  return `${d}/${m}/${y}`
+}
+
+interface Video {
+  id: string
+  title: string
+  url: string
+  thumbnail: string
+  duration: number | null
+  viewCount: number | null
+  uploadDate: string | null
+  channel: string
+}
+
+interface ChannelData {
+  name: string
+  videos: Video[]
+  error?: string
+}
+
 export default function Home() {
   const [url, setUrl] = useState('')
-  const [apiKey, setApiKey] = useState('')
-  const [showApiKey, setShowApiKey] = useState(false)
   const [loading, setLoading] = useState(false)
   const [status, setStatus] = useState('')
   const [summary, setSummary] = useState('')
@@ -39,21 +86,18 @@ export default function Home() {
   const [copied, setCopied] = useState(false)
   const [elapsed, setElapsed] = useState(0)
   const [totalTime, setTotalTime] = useState(0)
+  const [channels, setChannels] = useState<ChannelData[]>([])
+  const [feedLoading, setFeedLoading] = useState(true)
+  const [ttsState, setTtsState] = useState<'idle' | 'loading' | 'playing' | 'paused'>('idle')
   const summaryRef = useRef<HTMLDivElement>(null)
   const abortRef = useRef<AbortController | null>(null)
   const startTimeRef = useRef(0)
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null)
+  const audioRef = useRef<HTMLAudioElement | null>(null)
+  const ttsAbortRef = useRef<AbortController | null>(null)
 
   const videoId = extractVideoId(url)
-
-  useEffect(() => {
-    const saved = localStorage.getItem('openai-api-key')
-    if (saved) setApiKey(saved)
-  }, [])
-
-  useEffect(() => {
-    if (apiKey) localStorage.setItem('openai-api-key', apiKey)
-  }, [apiKey])
+  const lastSubmittedId = useRef<string | null>(null)
 
   useEffect(() => {
     if (summaryRef.current) {
@@ -84,9 +128,20 @@ export default function Home() {
     }
   }, [])
 
-  const handleSubmit = useCallback(async () => {
-    if (!url || loading) return
+  useEffect(() => {
+    fetch('/api/channels')
+      .then((res) => res.json())
+      .then((data) => setChannels(data))
+      .catch(() => {})
+      .finally(() => setFeedLoading(false))
+  }, [])
 
+  const handleSubmit = useCallback(async () => {
+    const vid = extractVideoId(url)
+    if (!url || !vid || loading) return
+
+    lastSubmittedId.current = vid
+    handleTtsStop()
     setLoading(true)
     setStatus('')
     setSummary('')
@@ -100,7 +155,7 @@ export default function Home() {
       const res = await fetch('/api/summarize', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ url, apiKey }),
+        body: JSON.stringify({ url }),
         signal: abortRef.current.signal,
       })
 
@@ -161,7 +216,13 @@ export default function Home() {
       setLoading(false)
       abortRef.current = null
     }
-  }, [url, apiKey, loading])
+  }, [url, loading])
+
+  useEffect(() => {
+    if (videoId && videoId !== lastSubmittedId.current && !loading) {
+      handleSubmit()
+    }
+  }, [videoId, loading, handleSubmit])
 
   const handleStop = () => {
     abortRef.current?.abort()
@@ -176,63 +237,192 @@ export default function Home() {
     setTimeout(() => setCopied(false), 2000)
   }
 
+  const handleTts = async () => {
+    if (ttsState === 'loading') return
+
+    if (ttsState === 'playing') {
+      audioRef.current?.pause()
+      setTtsState('paused')
+      return
+    }
+
+    if (ttsState === 'paused' && audioRef.current) {
+      audioRef.current.play()
+      setTtsState('playing')
+      return
+    }
+
+    setTtsState('loading')
+    ttsAbortRef.current = new AbortController()
+
+    try {
+      const res = await fetch('/api/tts', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ text: summary }),
+        signal: ttsAbortRef.current.signal,
+      })
+
+      if (!res.ok) {
+        const data = await res.json()
+        throw new Error(data.error || 'TTS failed')
+      }
+
+      const blob = await res.blob()
+      const url = URL.createObjectURL(blob)
+
+      if (audioRef.current) {
+        audioRef.current.pause()
+        URL.revokeObjectURL(audioRef.current.src)
+      }
+
+      const audio = new Audio(url)
+      audioRef.current = audio
+
+      audio.onended = () => {
+        setTtsState('idle')
+        URL.revokeObjectURL(url)
+        audioRef.current = null
+      }
+
+      audio.onerror = () => {
+        setTtsState('idle')
+        URL.revokeObjectURL(url)
+        audioRef.current = null
+      }
+
+      await audio.play()
+      setTtsState('playing')
+    } catch (err: unknown) {
+      if (err instanceof Error && err.name !== 'AbortError') {
+        setError(err.message)
+      }
+      setTtsState('idle')
+    } finally {
+      ttsAbortRef.current = null
+    }
+  }
+
+  const handleTtsStop = () => {
+    if (audioRef.current) {
+      audioRef.current.pause()
+      audioRef.current.currentTime = 0
+      URL.revokeObjectURL(audioRef.current.src)
+      audioRef.current = null
+    }
+    ttsAbortRef.current?.abort()
+    setTtsState('idle')
+  }
+
+  useEffect(() => {
+    return () => {
+      if (audioRef.current) {
+        audioRef.current.pause()
+        URL.revokeObjectURL(audioRef.current.src)
+      }
+    }
+  }, [])
+
   return (
     <div className="min-h-screen bg-background text-foreground">
-      <div className="mx-auto max-w-3xl px-4 py-12 sm:py-16">
-        <div className="mb-8">
+      <div className="mx-auto max-w-5xl px-4 py-12 sm:py-16">
+        <div className="mb-6">
           <h1 className="text-3xl font-bold tracking-tight">
             YouTube Summarizer
           </h1>
           <p className="mt-2 text-sm text-foreground/60">
-            Paste a YouTube URL to get an AI-powered summary in Vietnamese.
+            Pick a video or paste a URL to get a summary in Vietnamese.
           </p>
         </div>
 
-        <div className="space-y-3">
-          <div className="flex gap-2">
-            <input
-              type="url"
-              value={url}
-              onChange={(e) => setUrl(e.target.value)}
-              placeholder="https://youtube.com/watch?v=..."
-              className="flex-1 rounded-lg border border-foreground/10 bg-foreground/5 px-4 py-2.5 text-sm outline-none transition-colors focus:border-foreground/30 placeholder:text-foreground/30"
-              onKeyDown={(e) => e.key === 'Enter' && handleSubmit()}
-            />
-            {loading ? (
-              <button
-                onClick={handleStop}
-                className="rounded-lg bg-red-600 px-5 py-2.5 text-sm font-medium text-white transition-colors hover:bg-red-700"
-              >
-                Stop
-              </button>
-            ) : (
-              <button
-                onClick={handleSubmit}
-                disabled={!url}
-                className="rounded-lg bg-foreground px-5 py-2.5 text-sm font-medium text-background transition-colors hover:bg-foreground/90 disabled:opacity-30 disabled:cursor-not-allowed"
-              >
-                Summarize
-              </button>
-            )}
+        {!summary && !loading && (
+          <div className="mb-6 grid grid-cols-1 gap-4 sm:grid-cols-2">
+            {feedLoading
+              ? [0, 1].map((col) => (
+                  <div key={col} className="space-y-2">
+                    <div className="h-4 w-40 animate-pulse rounded bg-foreground/10" />
+                    {[0, 1, 2, 3, 4].map((i) => (
+                      <div
+                        key={i}
+                        className="flex gap-3 rounded-lg border border-foreground/10 p-2.5"
+                      >
+                        <div className="h-[72px] w-[128px] shrink-0 animate-pulse rounded bg-foreground/10" />
+                        <div className="flex flex-1 flex-col justify-between py-0.5">
+                          <div className="h-3.5 w-full animate-pulse rounded bg-foreground/8" />
+                          <div className="h-3.5 w-3/4 animate-pulse rounded bg-foreground/8" />
+                          <div className="h-3 w-1/2 animate-pulse rounded bg-foreground/5" />
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                ))
+              : channels.map((ch) =>
+                  ch.videos.length > 0 ? (
+                    <div key={ch.name} className="flex flex-col overflow-hidden">
+                      <h2 className="sticky top-0 z-10 bg-background pb-2 text-xs font-semibold uppercase tracking-wider text-foreground/40">
+                        {ch.name}
+                      </h2>
+                      <div className="space-y-1.5 overflow-y-auto max-h-[70vh] pr-1">
+                        {ch.videos.map((video) => (
+                          <button
+                            key={video.id}
+                            onClick={() => setUrl(video.url)}
+                            className="group flex w-full gap-3 rounded-lg border border-foreground/10 bg-foreground/[0.03] p-2 text-left transition-all hover:border-foreground/25 hover:bg-foreground/[0.07]"
+                          >
+                            <div className="relative shrink-0">
+                              <img
+                                src={video.thumbnail}
+                                alt={video.title}
+                                className="h-[72px] w-[128px] rounded object-cover"
+                              />
+                              {video.duration && (
+                                <span className="absolute bottom-0.5 right-0.5 rounded bg-black/80 px-1 py-px text-[10px] font-mono text-white/90">
+                                  {formatDuration(video.duration)}
+                                </span>
+                              )}
+                            </div>
+                            <div className="flex min-w-0 flex-1 flex-col justify-between py-px">
+                              <p className="text-[13px] leading-tight font-medium text-foreground/80 line-clamp-2 group-hover:text-foreground">
+                                {video.title}
+                              </p>
+                              <div className="mt-1 flex flex-wrap items-center gap-x-1.5 text-[11px] text-foreground/35">
+                                {video.viewCount != null && (
+                                  <span>{formatViews(video.viewCount)}</span>
+                                )}
+                                {video.viewCount != null &&
+                                  video.uploadDate && <span>·</span>}
+                                {video.uploadDate && (
+                                  <span>
+                                    {formatUploadDate(video.uploadDate)}
+                                  </span>
+                                )}
+                              </div>
+                            </div>
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                  ) : null,
+                )}
           </div>
+        )}
 
-          <div>
+        <div className="flex gap-2">
+          <input
+            type="url"
+            value={url}
+            onChange={(e) => setUrl(e.target.value)}
+            placeholder="Paste a YouTube URL..."
+            className="flex-1 rounded-lg border border-foreground/10 bg-foreground/5 px-4 py-2.5 text-sm outline-none transition-colors focus:border-foreground/30 placeholder:text-foreground/30"
+          />
+          {loading && (
             <button
-              onClick={() => setShowApiKey(!showApiKey)}
-              className="text-xs text-foreground/40 hover:text-foreground/60 transition-colors"
+              onClick={handleStop}
+              className="rounded-lg bg-red-600 px-5 py-2.5 text-sm font-medium text-white transition-colors hover:bg-red-700"
             >
-              {showApiKey ? '▾' : '▸'} API Key Settings
+              Stop
             </button>
-            {showApiKey && (
-              <input
-                type="password"
-                value={apiKey}
-                onChange={(e) => setApiKey(e.target.value)}
-                placeholder="sk-... (OpenAI API key)"
-                className="mt-2 w-full rounded-lg border border-foreground/10 bg-foreground/5 px-4 py-2 text-sm outline-none transition-colors focus:border-foreground/30 placeholder:text-foreground/30"
-              />
-            )}
-          </div>
+          )}
         </div>
 
         {videoId && (
@@ -294,12 +484,42 @@ export default function Home() {
                   </span>
                 )}
               </div>
-              <button
-                onClick={handleCopy}
-                className="text-xs text-foreground/40 hover:text-foreground/60 transition-colors"
-              >
-                {copied ? 'Copied!' : 'Copy'}
-              </button>
+              <div className="flex items-center gap-3">
+                {ttsState !== 'idle' && (
+                  <button
+                    onClick={handleTtsStop}
+                    className="text-xs text-red-400 hover:text-red-300 transition-colors"
+                    aria-label="Stop audio"
+                  >
+                    Stop
+                  </button>
+                )}
+                <button
+                  onClick={handleTts}
+                  disabled={ttsState === 'loading' || loading}
+                  className="flex items-center gap-1.5 text-xs text-foreground/40 hover:text-foreground/60 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+                  aria-label={
+                    ttsState === 'loading' ? 'Generating audio' :
+                    ttsState === 'playing' ? 'Pause audio' :
+                    ttsState === 'paused' ? 'Resume audio' :
+                    'Listen to summary'
+                  }
+                >
+                  {ttsState === 'loading' && (
+                    <div className="h-3 w-3 animate-spin rounded-full border border-foreground/20 border-t-foreground/50" />
+                  )}
+                  {ttsState === 'loading' ? 'Generating...' :
+                   ttsState === 'playing' ? 'Pause' :
+                   ttsState === 'paused' ? 'Resume' :
+                   'Listen'}
+                </button>
+                <button
+                  onClick={handleCopy}
+                  className="text-xs text-foreground/40 hover:text-foreground/60 transition-colors"
+                >
+                  {copied ? 'Copied!' : 'Copy'}
+                </button>
+              </div>
             </div>
             <div
               ref={summaryRef}
