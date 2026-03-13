@@ -1,5 +1,8 @@
 import { NextRequest } from 'next/server'
 import OpenAI from 'openai'
+import { createSSEStream, createSSEResponse } from '@/lib/api-utils'
+import { MODELS, TOKENS } from '@/lib/constants'
+import { error as logError } from '@/lib/logger'
 
 export const maxDuration = 60
 
@@ -29,13 +32,7 @@ export async function POST(req: NextRequest) {
   }
 
   const openai = new OpenAI({ apiKey })
-  const encoder = new TextEncoder()
-  const transform = new TransformStream()
-  const writer = transform.writable.getWriter()
-
-  const send = async (data: Record<string, unknown>) => {
-    await writer.write(encoder.encode(`data: ${JSON.stringify(data)}\n\n`))
-  }
+  const { readable, send, close } = createSSEStream()
 
   const langLabels: Record<string, string> = {
     'en-sg': 'English (Singaporean)',
@@ -48,12 +45,12 @@ export async function POST(req: NextRequest) {
   ;(async () => {
     try {
       const stream = await openai.responses.create({
-        model: 'gpt-5.4',
+        model: MODELS.GPT,
         instructions: SYSTEM_PROMPT,
         input: `Translate the following from ${from} to ${to}:\n\n${text}`,
         temperature: typeof temperature === 'number' ? temperature : 0.5,
         stream: true,
-        max_output_tokens: 4096,
+        max_output_tokens: TOKENS.TRANSLATE_MAX,
       })
 
       for await (const event of stream) {
@@ -66,17 +63,16 @@ export async function POST(req: NextRequest) {
     } catch (error: unknown) {
       const message =
         error instanceof Error ? error.message : 'An unexpected error occurred'
+      logError('Translation failed', {
+        sourceLang,
+        targetLang,
+        error: error instanceof Error ? error.message : String(error),
+      })
       await send({ type: 'error', message })
     } finally {
-      await writer.close()
+      await close()
     }
   })()
 
-  return new Response(transform.readable, {
-    headers: {
-      'Content-Type': 'text/event-stream',
-      'Cache-Control': 'no-cache',
-      Connection: 'keep-alive',
-    },
-  })
+  return createSSEResponse(readable)
 }
