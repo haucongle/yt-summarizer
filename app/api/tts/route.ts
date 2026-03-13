@@ -1,5 +1,6 @@
 import { NextRequest } from 'next/server'
 import OpenAI from 'openai'
+import { error as logError } from '@/lib/logger'
 
 export const maxDuration = 120
 
@@ -98,6 +99,11 @@ export async function POST(req: NextRequest) {
   } catch (error: unknown) {
     const message =
       error instanceof Error ? error.message : 'TTS generation failed'
+    logError('TTS generation failed', {
+      textLength: text.length,
+      chunkCount: chunks.length,
+      error: error instanceof Error ? error.message : String(error),
+    })
     return Response.json({ error: message }, { status: 500 })
   }
 }

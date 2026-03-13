@@ -156,7 +156,12 @@ export default function YouTubeSummarizer() {
                   setStatus('')
                   break
               }
-            } catch {}
+            } catch (err: unknown) {
+              // Ignore malformed JSON during streaming
+              if (err instanceof Error) {
+                console.error('Failed to parse streaming event:', err.message)
+              }
+            }
           }
         }
       }
@@ -347,6 +352,7 @@ export default function YouTubeSummarizer() {
                               className="group flex w-full gap-3 rounded-lg border border-foreground/10 bg-foreground/[0.03] p-2 text-left transition-all hover:border-foreground/25 hover:bg-foreground/[0.07]"
                             >
                               <div className="relative shrink-0">
+                                {/* eslint-disable-next-line @next/next/no-img-element */}
                                 <img
                                   src={video.thumbnail}
                                   alt={video.title}
@@ -405,6 +411,7 @@ export default function YouTubeSummarizer() {
 
         {videoId && (
           <div className="mt-4 flex items-center gap-3 rounded-lg border border-foreground/10 bg-foreground/5 p-3">
+            {/* eslint-disable-next-line @next/next/no-img-element */}
             <img
               src={`https://img.youtube.com/vi/${videoId}/mqdefault.jpg`}
               alt="Video thumbnail"

@@ -7,6 +7,8 @@ import { exec } from 'child_process'
 import { promisify } from 'util'
 import type OpenAI from 'openai'
 import { extractVideoId, parseSrt } from './youtube-utils'
+import * as logger from './logger'
+import { TIMEOUTS, AUDIO, MODELS } from './constants'
 
 export { extractVideoId, parseSrt }
 
@@ -42,7 +44,13 @@ export async function fetchYouTubeTranscript(
       const text = segments.map((s) => s.text).join(' ')
       return { text, source: 'youtube-vi', wordCount: text.split(/\s+/).length }
     }
-  } catch {}
+  } catch (error) {
+    logger.warn('Vietnamese transcript fetch failed, trying auto-generated', {
+      operation: 'fetchYouTubeTranscript',
+      videoId,
+      error,
+    })
+  }
 
   try {
     const segments = await YoutubeTranscript.fetchTranscript(videoId)
@@ -54,7 +62,13 @@ export async function fetchYouTubeTranscript(
         wordCount: text.split(/\s+/).length,
       }
     }
-  } catch {}
+  } catch (error) {
+    logger.warn('Auto-generated transcript fetch failed', {
+      operation: 'fetchYouTubeTranscript',
+      videoId,
+      error,
+    })
+  }
 
   return null
 }
@@ -72,7 +86,7 @@ export async function fetchSubtitlesWithYtDlp(
     await execAsync(
       `yt-dlp --remote-components ejs:github --write-auto-sub --sub-lang vi --skip-download --convert-subs srt ` +
         `-o "${join(tmpDir, 'subs')}" "https://www.youtube.com/watch?v=${videoId}"`,
-      { timeout: 30_000, env: SHELL_ENV },
+      { timeout: TIMEOUTS.YT_DLP_SUBTITLE, env: SHELL_ENV },
     )
 
     const files = await readdir(tmpDir)
@@ -84,10 +98,21 @@ export async function fetchSubtitlesWithYtDlp(
     if (!text) return null
 
     return { text, source: 'youtube-auto', wordCount: text.split(/\s+/).length }
-  } catch {
+  } catch (error) {
+    logger.warn('yt-dlp subtitle extraction failed', {
+      operation: 'fetchSubtitlesWithYtDlp',
+      videoId,
+      error,
+    })
     return null
   } finally {
-    await rm(tmpDir, { recursive: true, force: true }).catch(() => {})
+    await rm(tmpDir, { recursive: true, force: true }).catch((error) => {
+      logger.warn('Failed to cleanup temporary directory', {
+        operation: 'fetchSubtitlesWithYtDlp',
+        tmpDir,
+        error,
+      })
+    })
   }
 }
 
@@ -98,7 +123,12 @@ async function isCommandAvailable(cmd: string): Promise<boolean> {
   try {
     await execAsync(`${check} ${cmd}`, { env: SHELL_ENV })
     return true
-  } catch {
+  } catch (error) {
+    logger.debug('Command not available', {
+      operation: 'isCommandAvailable',
+      command: cmd,
+      error,
+    })
     return false
   }
 }
@@ -143,7 +173,7 @@ export async function transcribeWithWhisper(
     const dlStart = Date.now()
     await execAsync(
       `yt-dlp --remote-components ejs:github -x --audio-format mp3 --audio-quality 7 -o "${audioPath}" "https://www.youtube.com/watch?v=${videoId}"`,
-      { timeout: 600_000, env: SHELL_ENV },
+      { timeout: TIMEOUTS.YT_DLP_AUDIO, env: SHELL_ENV },
     )
 
     const fileStat = await stat(audioPath)
@@ -153,11 +183,11 @@ export async function transcribeWithWhisper(
 
     let fullText: string
 
-    if (sizeMB <= 24) {
+    if (sizeMB <= AUDIO.MAX_SINGLE_FILE_MB) {
       await onProgress('Transcribing with Whisper...')
       const response = await openai.audio.transcriptions.create({
         file: createReadStream(audioPath),
-        model: 'whisper-1',
+        model: MODELS.WHISPER,
         language: 'vi',
       })
       fullText = response.text
@@ -173,19 +203,18 @@ export async function transcribeWithWhisper(
 
       await onProgress('Splitting audio into 5-minute chunks...')
       await execAsync(
-        `ffmpeg -i "${audioPath}" -f segment -segment_time 300 -c:a libmp3lame -q:a 7 "${chunkDir}/chunk_%03d.mp3"`,
-        { timeout: 300_000, env: SHELL_ENV },
+        `ffmpeg -i "${audioPath}" -f segment -segment_time ${AUDIO.SEGMENT_DURATION_SEC} -c:a libmp3lame -q:a 7 "${chunkDir}/chunk_%03d.mp3"`,
+        { timeout: TIMEOUTS.FFMPEG_SPLIT, env: SHELL_ENV },
       )
 
       const chunks = (await readdir(chunkDir))
         .filter((f) => f.endsWith('.mp3'))
         .sort()
 
-      const CONCURRENCY = 5
       let completed = 0
       const txStart = Date.now()
       await onProgress(
-        `Transcribing ${chunks.length} chunks (${CONCURRENCY} in parallel)...`,
+        `Transcribing ${chunks.length} chunks (${AUDIO.WHISPER_CONCURRENCY} in parallel)...`,
       )
 
       const transcripts = await parallelMap(
@@ -193,7 +222,7 @@ export async function transcribeWithWhisper(
         async (chunk) => {
           const response = await openai.audio.transcriptions.create({
             file: createReadStream(join(chunkDir, chunk)),
-            model: 'whisper-1',
+            model: MODELS.WHISPER,
             language: 'vi',
           })
           completed++
@@ -207,7 +236,7 @@ export async function transcribeWithWhisper(
           )
           return response.text
         },
-        CONCURRENCY,
+        AUDIO.WHISPER_CONCURRENCY,
       )
 
       fullText = transcripts.join('\n\n')
@@ -219,6 +248,12 @@ export async function transcribeWithWhisper(
       wordCount: fullText.split(/\s+/).length,
     }
   } finally {
-    await rm(tmpDir, { recursive: true, force: true }).catch(() => {})
+    await rm(tmpDir, { recursive: true, force: true }).catch((error) => {
+      logger.warn('Failed to cleanup temporary directory', {
+        operation: 'transcribeWithWhisper',
+        tmpDir,
+        error,
+      })
+    })
   }
 }
