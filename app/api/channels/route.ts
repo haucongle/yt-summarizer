@@ -3,6 +3,7 @@ import { exec } from 'child_process'
 import { promisify } from 'util'
 import { homedir } from 'os'
 import { join } from 'path'
+import { warn } from '@/lib/logger'
 
 const execAsync = promisify(exec)
 
@@ -34,7 +35,13 @@ interface ChannelData {
   error?: string
 }
 
+// Cache TTL: 15 minutes in milliseconds
 const CACHE_TTL = 15 * 60 * 1000
+// yt-dlp timeout: 2 minutes in milliseconds
+const YT_DLP_TIMEOUT = 120_000
+// yt-dlp max buffer size: 20MB in bytes
+const YT_DLP_MAX_BUFFER = 20 * 1024 * 1024
+
 let cache: { data: ChannelData[]; timestamp: number } | null = null
 
 export async function GET() {
@@ -58,7 +65,7 @@ export async function GET() {
       try {
         const { stdout } = await execAsync(
           `yt-dlp --playlist-end 5 -j --no-warnings "${channel.url}"`,
-          { timeout: 120_000, env, maxBuffer: 20 * 1024 * 1024 },
+          { timeout: YT_DLP_TIMEOUT, env, maxBuffer: YT_DLP_MAX_BUFFER },
         )
         const lines = stdout.trim().split('\n').filter(Boolean)
         return {
@@ -77,7 +84,12 @@ export async function GET() {
             }
           }),
         }
-      } catch {
+      } catch (error) {
+        warn('Failed to fetch channel videos with yt-dlp', {
+          channelName: channel.name,
+          channelUrl: channel.url,
+          error: error instanceof Error ? error.message : String(error),
+        })
         return { name: channel.name, videos: [], error: 'Failed to fetch' }
       }
     }),
