@@ -6,6 +6,9 @@ import {
   fetchSubtitlesWithYtDlp,
   transcribeWithWhisper,
 } from '@/lib/youtube'
+import { createSSEStream, createSSEResponse } from '@/lib/api-utils'
+import { MODELS, TOKENS } from '@/lib/constants'
+import { error as logError } from '@/lib/logger'
 
 export const maxDuration = 300
 
@@ -26,14 +29,7 @@ export async function POST(req: NextRequest) {
   }
 
   const openai = new OpenAI({ apiKey })
-  const encoder = new TextEncoder()
-
-  const transform = new TransformStream()
-  const writer = transform.writable.getWriter()
-
-  const send = async (data: Record<string, unknown>) => {
-    await writer.write(encoder.encode(`data: ${JSON.stringify(data)}\n\n`))
-  }
+  const { readable, send, close } = createSSEStream()
 
   ;(async () => {
     try {
@@ -79,7 +75,7 @@ export async function POST(req: NextRequest) {
       })
 
       const stream = await openai.responses.create({
-        model: 'gpt-5.4',
+        model: MODELS.GPT,
         reasoning: { effort: 'none' },
         instructions: `Transcript có thể bằng tiếng Anh hoặc tiếng Việt — nhiệm vụ của bạn là dịch (nếu cần) và tóm tắt toàn bộ nội dung sang tiếng Việt.
 
@@ -91,7 +87,7 @@ Lưu ý:
 - Dùng markdown formatting`,
         input: `Hãy tóm tắt transcript video sau:\n\n${transcript.text}`,
         stream: true,
-        max_output_tokens: 16384,
+        max_output_tokens: TOKENS.SUMMARIZE_MAX,
       })
 
       for await (const event of stream) {
@@ -104,17 +100,15 @@ Lưu ý:
     } catch (error: unknown) {
       const message =
         error instanceof Error ? error.message : 'An unexpected error occurred'
+      logError('Summarization failed', {
+        videoId,
+        error: error instanceof Error ? error.message : String(error),
+      })
       await send({ type: 'error', message })
     } finally {
-      await writer.close()
+      await close()
     }
   })()
 
-  return new Response(transform.readable, {
-    headers: {
-      'Content-Type': 'text/event-stream',
-      'Cache-Control': 'no-cache',
-      Connection: 'keep-alive',
-    },
-  })
+  return createSSEResponse(readable)
 }
