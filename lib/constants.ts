@@ -59,4 +59,32 @@ export const FORMATTING = {
   SECONDS_PER_MINUTE: 60,
   /** Seconds per hour (3600) */
   SECONDS_PER_HOUR: 3600,
+  /** Milliseconds per second (1000) */
+  MILLISECONDS_PER_SECOND: 1000,
+  /** Milliseconds per day (86,400,000) */
+  MILLISECONDS_PER_DAY: 1000 * 60 * 60 * 24,
+  /** Days per week (7) */
+  DAYS_PER_WEEK: 7,
+  /** Days per month approximation (30) */
+  DAYS_PER_MONTH_APPROX: 30,
+  /** Decimal places for view count formatting (1) */
+  DECIMAL_PLACES: 1,
+  /** Padding width for time formatting (2) */
+  PAD_WIDTH: 2,
+  /** Padding character for time formatting ('0') */
+  PAD_CHAR: '0',
+  /** Expected date string length for YYYYMMDD format (8) */
+  DATE_STRING_LENGTH: 8,
+  /** Year substring start index (0) */
+  YEAR_START: 0,
+  /** Year substring end index (4) */
+  YEAR_END: 4,
+  /** Month substring start index (4) */
+  MONTH_START: 4,
+  /** Month substring end index (6) */
+  MONTH_END: 6,
+  /** Day substring start index (6) */
+  DAY_START: 6,
+  /** Day substring end index (8) */
+  DAY_END: 8,
 } as const
