@@ -9,7 +9,6 @@ import {
 import { createSSEStream, createSSEResponse } from '@/lib/api-utils'
 import { MODELS, TOKENS } from '@/lib/constants'
 import { error as logError } from '@/lib/logger'
-import type { SSEEvent } from '@/lib/types'
 
 export const maxDuration = 300
 
