@@ -48,6 +48,11 @@ export default function YouTubeSummarizer() {
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null)
   const audioRef = useRef<HTMLAudioElement | null>(null)
   const ttsAbortRef = useRef<AbortController | null>(null)
+  const audioQueueRef = useRef<string[]>([])
+  const currentChunkIndexRef = useRef(0)
+  const ttsStreamingRef = useRef(false)
+  const waitingForChunkRef = useRef(false)
+  const [ttsProgress, setTtsProgress] = useState<{ current: number; total: number } | null>(null)
 
   const videoId = extractVideoId(url)
   const lastSubmittedId = useRef<string | null>(null)
@@ -195,6 +200,47 @@ export default function YouTubeSummarizer() {
     setTimeout(() => setCopied(false), 2000)
   }
 
+  const playNextChunk = useCallback(() => {
+    const queue = audioQueueRef.current
+    const idx = currentChunkIndexRef.current
+
+    if (idx >= queue.length) {
+      if (!ttsStreamingRef.current) {
+        setTtsState('idle')
+        setTtsProgress(null)
+        audioRef.current = null
+      } else {
+        waitingForChunkRef.current = true
+      }
+      return
+    }
+
+    waitingForChunkRef.current = false
+
+    const audio = new Audio(queue[idx])
+    audio.playbackRate = playbackSpeed
+    audioRef.current = audio
+
+    audio.onended = () => {
+      URL.revokeObjectURL(queue[idx])
+      currentChunkIndexRef.current++
+      playNextChunk()
+    }
+
+    audio.onerror = () => {
+      URL.revokeObjectURL(queue[idx])
+      currentChunkIndexRef.current++
+      playNextChunk()
+    }
+
+    audio.play().then(() => {
+      setTtsState('playing')
+    }).catch(() => {
+      currentChunkIndexRef.current++
+      playNextChunk()
+    })
+  }, [playbackSpeed])
+
   const handleTts = async () => {
     if (ttsState === 'loading') return
 
@@ -211,13 +257,17 @@ export default function YouTubeSummarizer() {
     }
 
     setTtsState('loading')
+    setTtsProgress(null)
     ttsAbortRef.current = new AbortController()
+    audioQueueRef.current = []
+    currentChunkIndexRef.current = 0
+    ttsStreamingRef.current = true
 
     try {
       const res = await fetch('/api/tts', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ text: summary }),
+        body: JSON.stringify({ text: summary, stream: true }),
         signal: ttsAbortRef.current.signal,
       })
 
@@ -226,39 +276,74 @@ export default function YouTubeSummarizer() {
         throw new Error(data.error || 'TTS failed')
       }
 
-      const blob = await res.blob()
-      const url = URL.createObjectURL(blob)
+      const reader = res.body!.getReader()
+      const decoder = new TextDecoder()
+      let buffer = ''
+      let firstChunkPlayed = false
 
-      if (audioRef.current) {
-        audioRef.current.pause()
-        URL.revokeObjectURL(audioRef.current.src)
+      while (true) {
+        const { done, value } = await reader.read()
+        if (done) break
+
+        buffer += decoder.decode(value, { stream: true })
+
+        while (buffer.includes('\n\n')) {
+          const idx = buffer.indexOf('\n\n')
+          const event = buffer.substring(0, idx)
+          buffer = buffer.substring(idx + 2)
+
+          if (!event.startsWith('data: ')) continue
+
+          try {
+            const data = JSON.parse(event.substring(6))
+
+            if (data.type === 'audio') {
+              const binary = atob(data.chunk)
+              const bytes = new Uint8Array(binary.length)
+              for (let i = 0; i < binary.length; i++) {
+                bytes[i] = binary.charCodeAt(i)
+              }
+              const blob = new Blob([bytes], { type: 'audio/mpeg' })
+              const blobUrl = URL.createObjectURL(blob)
+              audioQueueRef.current.push(blobUrl)
+              setTtsProgress({ current: data.index + 1, total: data.total })
+
+              if (!firstChunkPlayed) {
+                firstChunkPlayed = true
+                playNextChunk()
+              } else if (waitingForChunkRef.current) {
+                playNextChunk()
+              }
+            } else if (data.type === 'error') {
+              throw new Error(data.message)
+            }
+          } catch (parseErr: unknown) {
+            if (parseErr instanceof Error && parseErr.message !== 'TTS generation failed') {
+              if (parseErr instanceof SyntaxError) continue
+              throw parseErr
+            }
+            throw parseErr
+          }
+        }
       }
-
-      const audio = new Audio(url)
-      audio.playbackRate = playbackSpeed
-      audioRef.current = audio
-
-      audio.onended = () => {
-        setTtsState('idle')
-        URL.revokeObjectURL(url)
-        audioRef.current = null
-      }
-
-      audio.onerror = () => {
-        setTtsState('idle')
-        URL.revokeObjectURL(url)
-        audioRef.current = null
-      }
-
-      await audio.play()
-      setTtsState('playing')
     } catch (err: unknown) {
       if (err instanceof Error && err.name !== 'AbortError') {
         setError(err.message)
       }
-      setTtsState('idle')
+      if (audioQueueRef.current.length === 0) {
+        setTtsState('idle')
+        setTtsProgress(null)
+      }
     } finally {
+      ttsStreamingRef.current = false
       ttsAbortRef.current = null
+
+      const queue = audioQueueRef.current
+      const idx = currentChunkIndexRef.current
+      if (idx >= queue.length && !audioRef.current) {
+        setTtsState('idle')
+        setTtsProgress(null)
+      }
     }
   }
 
@@ -269,8 +354,16 @@ export default function YouTubeSummarizer() {
       URL.revokeObjectURL(audioRef.current.src)
       audioRef.current = null
     }
+    for (let i = currentChunkIndexRef.current + 1; i < audioQueueRef.current.length; i++) {
+      URL.revokeObjectURL(audioQueueRef.current[i])
+    }
+    audioQueueRef.current = []
+    currentChunkIndexRef.current = 0
+    ttsStreamingRef.current = false
+    waitingForChunkRef.current = false
     ttsAbortRef.current?.abort()
     setTtsState('idle')
+    setTtsProgress(null)
   }
 
   useEffect(() => {
@@ -283,6 +376,8 @@ export default function YouTubeSummarizer() {
         audioRef.current.pause()
         URL.revokeObjectURL(audioRef.current.src)
       }
+      audioQueueRef.current.forEach((u) => URL.revokeObjectURL(u))
+      audioQueueRef.current = []
     }
   }, [])
 
@@ -515,6 +610,11 @@ export default function YouTubeSummarizer() {
                    ttsState === 'playing' ? 'Pause' :
                    ttsState === 'paused' ? 'Resume' :
                    'Listen'}
+                  {ttsProgress && ttsProgress.total > 1 && ttsState !== 'idle' && (
+                    <span className="text-[10px] text-foreground/30 tabular-nums">
+                      {ttsProgress.current}/{ttsProgress.total}
+                    </span>
+                  )}
                 </button>
                 <button
                   onClick={handleCopy}

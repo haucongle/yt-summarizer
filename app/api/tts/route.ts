@@ -51,8 +51,48 @@ export function splitTextIntoChunks(text: string): string[] {
   return chunks.filter(Boolean)
 }
 
+function createStreamingResponse(chunks: string[], openai: OpenAI) {
+  const encoder = new TextEncoder()
+
+  const readable = new ReadableStream({
+    async start(controller) {
+      const send = (data: Record<string, unknown>) => {
+        controller.enqueue(encoder.encode(`data: ${JSON.stringify(data)}\n\n`))
+      }
+
+      try {
+        for (let i = 0; i < chunks.length; i++) {
+          const response = await openai.audio.speech.create({
+            model: 'tts-1',
+            voice: 'nova',
+            input: chunks[i],
+            response_format: 'mp3',
+          })
+          const buffer = await response.arrayBuffer()
+          const base64 = Buffer.from(buffer).toString('base64')
+          send({ type: 'audio', chunk: base64, index: i, total: chunks.length })
+        }
+        send({ type: 'done' })
+      } catch (err: unknown) {
+        const message = err instanceof Error ? err.message : 'TTS generation failed'
+        send({ type: 'error', message })
+      } finally {
+        controller.close()
+      }
+    },
+  })
+
+  return new Response(readable, {
+    headers: {
+      'Content-Type': 'text/event-stream',
+      'Cache-Control': 'no-cache',
+      Connection: 'keep-alive',
+    },
+  })
+}
+
 export async function POST(req: NextRequest) {
-  const { text } = await req.json()
+  const { text, stream: useStream } = await req.json()
 
   if (!text || typeof text !== 'string') {
     return Response.json({ error: 'Text is required' }, { status: 400 })
@@ -68,6 +108,10 @@ export async function POST(req: NextRequest) {
 
   const openai = new OpenAI({ apiKey })
   const chunks = splitTextIntoChunks(text)
+
+  if (useStream) {
+    return createStreamingResponse(chunks, openai)
+  }
 
   try {
     const audioBuffers: ArrayBuffer[] = await Promise.all(
