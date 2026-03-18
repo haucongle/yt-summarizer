@@ -52,6 +52,8 @@ export default function YouTubeSummarizer() {
   const currentChunkIndexRef = useRef(0)
   const ttsStreamingRef = useRef(false)
   const waitingForChunkRef = useRef(false)
+  const playbackSpeedRef = useRef(playbackSpeed)
+  playbackSpeedRef.current = playbackSpeed
   const [ttsProgress, setTtsProgress] = useState<{ current: number; total: number } | null>(null)
 
   const videoId = extractVideoId(url)
@@ -218,7 +220,7 @@ export default function YouTubeSummarizer() {
     waitingForChunkRef.current = false
 
     const audio = new Audio(queue[idx])
-    audio.playbackRate = playbackSpeed
+    audio.playbackRate = playbackSpeedRef.current
     audioRef.current = audio
 
     audio.onended = () => {
@@ -239,7 +241,7 @@ export default function YouTubeSummarizer() {
       currentChunkIndexRef.current++
       playNextChunk()
     })
-  }, [playbackSpeed])
+  }, [])
 
   const handleTts = async () => {
     if (ttsState === 'loading') return
@@ -327,10 +329,23 @@ export default function YouTubeSummarizer() {
         }
       }
     } catch (err: unknown) {
-      if (err instanceof Error && err.name !== 'AbortError') {
-        setError(err.message)
-      }
-      if (audioQueueRef.current.length === 0) {
+      const isAbort = err instanceof Error && err.name === 'AbortError'
+      if (!isAbort) {
+        if (err instanceof Error) setError(err.message)
+        const queueStart = audioRef.current
+          ? currentChunkIndexRef.current + 1
+          : currentChunkIndexRef.current
+        if (audioRef.current) {
+          audioRef.current.pause()
+          URL.revokeObjectURL(audioRef.current.src)
+          audioRef.current = null
+        }
+        for (let i = queueStart; i < audioQueueRef.current.length; i++) {
+          URL.revokeObjectURL(audioQueueRef.current[i])
+        }
+        audioQueueRef.current = []
+        currentChunkIndexRef.current = 0
+        waitingForChunkRef.current = false
         setTtsState('idle')
         setTtsProgress(null)
       }
@@ -338,9 +353,7 @@ export default function YouTubeSummarizer() {
       ttsStreamingRef.current = false
       ttsAbortRef.current = null
 
-      const queue = audioQueueRef.current
-      const idx = currentChunkIndexRef.current
-      if (idx >= queue.length && !audioRef.current) {
+      if (!audioRef.current && currentChunkIndexRef.current >= audioQueueRef.current.length) {
         setTtsState('idle')
         setTtsProgress(null)
       }

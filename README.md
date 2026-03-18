@@ -7,41 +7,116 @@ sdk: docker
 app_port: 7860
 ---
 
-# YT Summarizer
+# Toolkit
 
-Paste a YouTube link, get a Vietnamese summary powered by GPT-4o.
+A personal productivity toolkit built with Next.js 16 and the OpenAI API. Three tools accessible from a single hub.
+
+## Tools
+
+### YouTube Summarizer
+
+Paste a YouTube link and get a Vietnamese summary streamed in real time.
+
+- **Transcript fallback chain**: `youtube-transcript` npm package (Vietnamese → auto-generated) → `yt-dlp` subtitles → `yt-dlp` audio download + Whisper transcription (with ffmpeg chunking for large files)
+- **Streaming TTS**: audio chunks play as they generate via SSE — no waiting for the full file
+- **Favorite Channels feed**: latest videos from configured channels, cached 15 minutes
+- Playback controls: pause/resume, stop, speed (1x / 1.25x / 1.5x / 2x)
+
+### Translator
+
+English (Singaporean) ↔ Vietnamese translation with auto-translate on typing.
+
+- Three temperature presets: Precise (0), Balanced (0.5), Creative (1)
+- Streaming output, swap languages, TTS for both sides, copy
+
+### Diff Checker
+
+Client-side line diff between two text blocks or files.
+
+- Side-by-side view with line numbers
+- Added / removed / unchanged stats
+- File upload support
+
+## Tech Stack
+
+| Layer | Technology |
+|-------|------------|
+| Framework | Next.js 16, React 19, TypeScript 5.9 |
+| Styling | Tailwind CSS 4, Geist font |
+| AI | OpenAI SDK 6 (GPT-5.4, Whisper, TTS) |
+| Markdown | react-markdown, remark-gfm |
+| Transcripts | youtube-transcript, yt-dlp, ffmpeg |
+| Testing | Bun test |
+| Runtime | Node.js 22 (Docker) |
 
 ## Getting Started
 
-First, run the development server:
-
 ```bash
+cp .env.example .env    # add your OPENAI_API_KEY
+npm install
 npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+Open [http://localhost:3000](http://localhost:3000).
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+### Environment Variables
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+| Variable | Description |
+|----------|-------------|
+| `OPENAI_API_KEY` | OpenAI API key (required for summarization, translation, and TTS) |
 
-## Learn More
+### Optional System Dependencies
 
-To learn more about Next.js, take a look at the following resources:
+These are only needed for the YouTube Summarizer's fallback transcript methods:
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+- **yt-dlp** — subtitle/audio extraction when the npm transcript package fails
+- **ffmpeg** — splitting large audio files before Whisper transcription
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+## API Routes
 
-## Deploy on Vercel
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| POST | `/api/summarize` | YouTube video summarization (SSE stream) |
+| POST | `/api/translate` | Text translation (SSE stream) |
+| POST | `/api/tts` | Text-to-speech — single response or `stream: true` for SSE audio chunks |
+| GET | `/api/channels` | Favorite channels feed (cached, uses yt-dlp) |
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
+## Project Structure
 
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+```
+app/
+├── page.tsx                        # Home hub
+├── youtube-summarizer/page.tsx
+├── translator/page.tsx
+├── diff-checker/page.tsx
+└── api/
+    ├── summarize/route.ts
+    ├── translate/route.ts
+    ├── tts/route.ts
+    └── channels/route.ts
+lib/
+├── youtube.ts                      # Transcript extraction pipeline
+├── youtube-utils.ts                # Video ID parsing, SRT parsing
+├── api-utils.ts                    # SSE stream helpers
+├── diff.ts                         # LCS-based line diff
+├── constants.ts                    # Models, timeouts, limits
+├── formatters.ts                   # Duration, views, dates
+├── logger.ts                       # Structured logging
+├── types.ts                        # Shared types
+└── __tests__/
+```
+
+## Deployment
+
+### Docker
+
+The included multi-stage `Dockerfile` installs yt-dlp, ffmpeg, and produces a standalone Next.js build. Runs on port 7860.
+
+```bash
+docker build -t toolkit .
+docker run -p 7860:7860 -e OPENAI_API_KEY=sk-... toolkit
+```
+
+### Render
+
+A `render.yaml` is included for one-click deploy on Render (Docker runtime, free plan).
