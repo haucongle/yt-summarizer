@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'bun:test'
 import { splitTextIntoChunks } from '../../app/api/tts/route'
 
-const MAX_CHUNK_LENGTH = 4000
+const MAX_CHUNK_LENGTH = 1000
 
 describe('splitTextIntoChunks', () => {
   it('returns short text as a single chunk', () => {
@@ -86,23 +86,19 @@ describe('splitTextIntoChunks', () => {
   })
 
   it('splits long text at sentence boundaries (". ")', () => {
-    // Create two large blocks separated by ". " — each block > 30% of MAX_CHUNK_LENGTH
-    const firstPart = 'A'.repeat(3000) + '. '
-    const secondPart = 'B'.repeat(2000)
+    const firstPart = 'A'.repeat(750) + '. '
+    const secondPart = 'B'.repeat(500)
     const text = firstPart + secondPart
 
     const result = splitTextIntoChunks(text)
     expect(result.length).toBeGreaterThanOrEqual(2)
-    // First chunk should contain the A's and end at the sentence boundary (trimmed)
     expect(result[0]).toContain('A'.repeat(100))
-    // Second chunk should contain the B's
     expect(result[1]).toContain('B'.repeat(100))
   })
 
   it('splits long text at paragraph boundaries ("\\n\\n")', () => {
-    // Two paragraphs, each large enough to be > 30% of MAX_CHUNK_LENGTH
-    const paragraph1 = 'First paragraph content. '.repeat(100) // ~2500 chars
-    const paragraph2 = 'Second paragraph content. '.repeat(100)
+    const paragraph1 = 'First paragraph content. '.repeat(25) // ~625 chars
+    const paragraph2 = 'Second paragraph content. '.repeat(25)
     const text = paragraph1.trim() + '\n\n' + paragraph2.trim()
 
     const result = splitTextIntoChunks(text)
@@ -110,9 +106,8 @@ describe('splitTextIntoChunks', () => {
   })
 
   it('falls back to space splitting when no natural break points exist after 30%', () => {
-    // Create text with words but no sentence-ending punctuation, longer than MAX_CHUNK_LENGTH
     const word = 'word '
-    const text = word.repeat(Math.ceil((MAX_CHUNK_LENGTH + 500) / word.length))
+    const text = word.repeat(Math.ceil((MAX_CHUNK_LENGTH + 200) / word.length))
 
     const result = splitTextIntoChunks(text)
     expect(result.length).toBeGreaterThanOrEqual(2)
@@ -123,8 +118,7 @@ describe('splitTextIntoChunks', () => {
   })
 
   it('falls back to hard split when no spaces exist', () => {
-    // Create a continuous string with no spaces or break points
-    const text = 'x'.repeat(MAX_CHUNK_LENGTH + 500)
+    const text = 'x'.repeat(MAX_CHUNK_LENGTH + 200)
 
     const result = splitTextIntoChunks(text)
     expect(result.length).toBeGreaterThanOrEqual(2)

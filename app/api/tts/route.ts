@@ -4,7 +4,8 @@ import { error as logError } from '@/lib/logger'
 
 export const maxDuration = 120
 
-const MAX_CHUNK_LENGTH = 4000
+const MAX_CHUNK_LENGTH = 1000
+const STREAM_CONCURRENCY = 3
 
 export function splitTextIntoChunks(text: string): string[] {
   const stripped = text
@@ -61,17 +62,29 @@ function createStreamingResponse(chunks: string[], openai: OpenAI) {
       }
 
       try {
+        const pending = new Map<number, Promise<ArrayBuffer>>()
+
+        const enqueue = (i: number) => {
+          if (i >= chunks.length || pending.has(i)) return
+          pending.set(
+            i,
+            openai.audio.speech
+              .create({ model: 'tts-1', voice: 'nova', input: chunks[i], response_format: 'mp3' })
+              .then((r) => r.arrayBuffer()),
+          )
+        }
+
+        for (let i = 0; i < Math.min(STREAM_CONCURRENCY, chunks.length); i++) enqueue(i)
+
         for (let i = 0; i < chunks.length; i++) {
-          const response = await openai.audio.speech.create({
-            model: 'tts-1',
-            voice: 'nova',
-            input: chunks[i],
-            response_format: 'mp3',
-          })
-          const buffer = await response.arrayBuffer()
+          const buffer = await pending.get(i)!
+          pending.delete(i)
+          enqueue(i + STREAM_CONCURRENCY)
+
           const base64 = Buffer.from(buffer).toString('base64')
           send({ type: 'audio', chunk: base64, index: i, total: chunks.length })
         }
+
         send({ type: 'done' })
       } catch (err: unknown) {
         const message = err instanceof Error ? err.message : 'TTS generation failed'
