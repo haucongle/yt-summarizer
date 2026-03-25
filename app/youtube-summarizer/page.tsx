@@ -41,7 +41,7 @@ export default function YouTubeSummarizer() {
   const [feedLoading, setFeedLoading] = useState(true)
   const [ttsState, setTtsState] = useState<'idle' | 'loading' | 'playing' | 'paused'>('idle')
   const [playbackSpeed, setPlaybackSpeed] = useState(1.0)
-  const [autoTts, setAutoTts] = useState(false)
+  const [autoTts, setAutoTts] = useState(true)
   const [feedOpen, setFeedOpen] = useState(false)
   const summaryRef = useRef<HTMLDivElement>(null)
   const abortRef = useRef<AbortController | null>(null)
@@ -58,15 +58,12 @@ export default function YouTubeSummarizer() {
   const [ttsProgress, setTtsProgress] = useState<{ current: number; total: number } | null>(null)
   const autoTtsRef = useRef(autoTts)
   autoTtsRef.current = autoTts
+  const playNextChunkRef = useRef<() => void>(() => {})
 
   const videoId = extractVideoId(url)
   const lastSubmittedId = useRef<string | null>(null)
 
-  useEffect(() => {
-    if (summaryRef.current) {
-      summaryRef.current.scrollTop = summaryRef.current.scrollHeight
-    }
-  }, [summary])
+  
 
   const startTimer = () => {
     startTimeRef.current = Date.now()
@@ -187,9 +184,9 @@ export default function YouTubeSummarizer() {
 
                   if (!firstAudioPlayed) {
                     firstAudioPlayed = true
-                    playNextChunk()
+                    playNextChunkRef.current()
                   } else if (waitingForChunkRef.current) {
-                    playNextChunk()
+                    playNextChunkRef.current()
                   }
                   break
                 }
@@ -233,7 +230,7 @@ export default function YouTubeSummarizer() {
       }
       abortRef.current = null
     }
-  }, [url, loading, playNextChunk])
+  }, [url, loading])
 
   useEffect(() => {
     if (videoId && videoId !== lastSubmittedId.current && !loading) {
@@ -297,6 +294,7 @@ export default function YouTubeSummarizer() {
       playNextChunk()
     })
   }, [])
+  playNextChunkRef.current = playNextChunk
 
   const handleTts = async () => {
     if (ttsState === 'loading') return
