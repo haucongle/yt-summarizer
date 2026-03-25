@@ -1,56 +1,13 @@
 import { NextRequest } from 'next/server'
 import OpenAI from 'openai'
 import { error as logError } from '@/lib/logger'
+import { splitTextIntoChunks } from '@/lib/tts-utils'
+
+export { splitTextIntoChunks }
 
 export const maxDuration = 120
 
-const MAX_CHUNK_LENGTH = 1000
 const STREAM_CONCURRENCY = 3
-
-export function splitTextIntoChunks(text: string): string[] {
-  const stripped = text
-    .replace(/#{1,6}\s/g, '')
-    .replace(/\*{1,2}([^*]+)\*{1,2}/g, '$1')
-    .replace(/`([^`]+)`/g, '$1')
-    .replace(/\[([^\]]+)\]\([^)]+\)/g, '$1')
-    .replace(/^[-*]\s/gm, '')
-    .replace(/^\d+\.\s/gm, '')
-    .replace(/\n{3,}/g, '\n\n')
-    .trim()
-
-  if (stripped.length <= MAX_CHUNK_LENGTH) return [stripped]
-
-  const chunks: string[] = []
-  let remaining = stripped
-
-  while (remaining.length > 0) {
-    if (remaining.length <= MAX_CHUNK_LENGTH) {
-      chunks.push(remaining)
-      break
-    }
-
-    const slice = remaining.substring(0, MAX_CHUNK_LENGTH)
-
-    let splitAt = -1
-    for (const sep of ['\n\n', '.\n', '. ', '! ', '? ', ';\n', '; ', ',\n', ', ', '\n']) {
-      const idx = slice.lastIndexOf(sep)
-      if (idx > MAX_CHUNK_LENGTH * 0.3) {
-        splitAt = idx + sep.length
-        break
-      }
-    }
-
-    if (splitAt === -1) {
-      splitAt = slice.lastIndexOf(' ')
-      if (splitAt === -1) splitAt = MAX_CHUNK_LENGTH
-    }
-
-    chunks.push(remaining.substring(0, splitAt).trim())
-    remaining = remaining.substring(splitAt).trim()
-  }
-
-  return chunks.filter(Boolean)
-}
 
 function createStreamingResponse(chunks: string[], openai: OpenAI) {
   const encoder = new TextEncoder()

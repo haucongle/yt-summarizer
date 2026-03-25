@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'bun:test'
-import { splitTextIntoChunks } from '../../app/api/tts/route'
+import { splitTextIntoChunks } from '../tts-utils'
 
 const MAX_CHUNK_LENGTH = 1000
 

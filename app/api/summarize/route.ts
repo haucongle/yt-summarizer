@@ -8,12 +8,15 @@ import {
 } from '@/lib/youtube'
 import { createSSEStream, createSSEResponse } from '@/lib/api-utils'
 import { MODELS, TOKENS } from '@/lib/constants'
+import { extractTtsChunk, stripMarkdown } from '@/lib/tts-utils'
 import { error as logError } from '@/lib/logger'
 
 export const maxDuration = 300
 
+const TTS_POLL_MS = 50
+
 export async function POST(req: NextRequest) {
-  const { url } = await req.json()
+  const { url, tts: enableTts } = await req.json()
 
   const videoId = extractVideoId(url)
   if (!videoId) {
@@ -35,11 +38,9 @@ export async function POST(req: NextRequest) {
     try {
       let transcript: { text: string; source: string; wordCount: number } | null = null
 
-      // Tier 1: YouTube transcript via npm (~2s)
       await send({ type: 'status', message: 'Fetching transcript from YouTube...' })
       transcript = await fetchYouTubeTranscript(videoId)
 
-      // Tier 2: yt-dlp subtitle extraction (~3-5s, no audio download)
       if (!transcript) {
         await send({ type: 'status', message: 'Trying yt-dlp subtitle extraction...' })
         transcript = await fetchSubtitlesWithYtDlp(videoId)
@@ -52,7 +53,6 @@ export async function POST(req: NextRequest) {
         })
       }
 
-      // Tier 3: Audio download + parallel Whisper (slow, last resort)
       if (!transcript) {
         await send({
           type: 'status',
@@ -90,13 +90,75 @@ Lưu ý:
         max_output_tokens: TOKENS.SUMMARIZE_MAX,
       })
 
+      let ttsBuffer = ''
+      const ttsResults: Promise<ArrayBuffer | null>[] = []
+      let ttsSendIndex = 0
+      let ttsFinalized = false
+
+      const ttsDrainer = enableTts
+        ? (async () => {
+            while (true) {
+              if (ttsSendIndex < ttsResults.length) {
+                const buffer = await ttsResults[ttsSendIndex]
+                if (buffer) {
+                  const base64 = Buffer.from(buffer).toString('base64')
+                  await send({
+                    type: 'audio',
+                    chunk: base64,
+                    index: ttsSendIndex,
+                    total: ttsFinalized ? ttsResults.length : -1,
+                  })
+                }
+                ttsSendIndex++
+              } else if (ttsFinalized) {
+                break
+              } else {
+                await new Promise((r) => setTimeout(r, TTS_POLL_MS))
+              }
+            }
+          })()
+        : null
+
       for await (const event of stream) {
         if (event.type === 'response.output_text.delta') {
           await send({ type: 'content', text: event.delta })
+
+          if (enableTts) {
+            ttsBuffer += event.delta
+            let extracted = extractTtsChunk(ttsBuffer)
+            while (extracted) {
+              const { chunk, remaining } = extracted
+              ttsBuffer = remaining
+              ttsResults.push(
+                openai.audio.speech
+                  .create({ model: 'tts-1', voice: 'nova', input: chunk, response_format: 'mp3' })
+                  .then((r) => r.arrayBuffer())
+                  .catch(() => null),
+              )
+              extracted = extractTtsChunk(ttsBuffer)
+            }
+          }
         }
       }
 
       await send({ type: 'done' })
+
+      if (enableTts) {
+        const remaining = stripMarkdown(ttsBuffer.trim())
+        if (remaining) {
+          ttsResults.push(
+            openai.audio.speech
+              .create({ model: 'tts-1', voice: 'nova', input: remaining, response_format: 'mp3' })
+              .then((r) => r.arrayBuffer())
+              .catch(() => null),
+          )
+        }
+        ttsFinalized = true
+        if (ttsDrainer) {
+          await ttsDrainer
+          await send({ type: 'tts_done', total: ttsResults.length })
+        }
+      }
     } catch (error: unknown) {
       const message =
         error instanceof Error ? error.message : 'An unexpected error occurred'

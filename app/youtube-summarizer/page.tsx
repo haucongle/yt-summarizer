@@ -41,6 +41,7 @@ export default function YouTubeSummarizer() {
   const [feedLoading, setFeedLoading] = useState(true)
   const [ttsState, setTtsState] = useState<'idle' | 'loading' | 'playing' | 'paused'>('idle')
   const [playbackSpeed, setPlaybackSpeed] = useState(1.0)
+  const [autoTts, setAutoTts] = useState(false)
   const [feedOpen, setFeedOpen] = useState(false)
   const summaryRef = useRef<HTMLDivElement>(null)
   const abortRef = useRef<AbortController | null>(null)
@@ -55,6 +56,8 @@ export default function YouTubeSummarizer() {
   const playbackSpeedRef = useRef(playbackSpeed)
   playbackSpeedRef.current = playbackSpeed
   const [ttsProgress, setTtsProgress] = useState<{ current: number; total: number } | null>(null)
+  const autoTtsRef = useRef(autoTts)
+  autoTtsRef.current = autoTts
 
   const videoId = extractVideoId(url)
   const lastSubmittedId = useRef<string | null>(null)
@@ -109,13 +112,25 @@ export default function YouTubeSummarizer() {
     setTranscriptInfo(null)
     startTimer()
 
+    const wantTts = autoTtsRef.current
+    if (wantTts) {
+      audioQueueRef.current = []
+      currentChunkIndexRef.current = 0
+      ttsStreamingRef.current = true
+      waitingForChunkRef.current = false
+      setTtsState('loading')
+      setTtsProgress(null)
+    }
+
     abortRef.current = new AbortController()
+    let firstAudioPlayed = false
+    let summaryDone = false
 
     try {
       const res = await fetch('/api/summarize', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ url }),
+        body: JSON.stringify({ url, tts: wantTts }),
         signal: abortRef.current.signal,
       })
 
@@ -148,7 +163,7 @@ export default function YouTubeSummarizer() {
                   break
                 case 'content':
                   setSummary((prev) => prev + data.text)
-                  setStatus('')
+                  if (!summaryDone) setStatus('')
                   break
                 case 'transcript_info':
                   setTranscriptInfo({
@@ -156,15 +171,47 @@ export default function YouTubeSummarizer() {
                     wordCount: data.wordCount,
                   })
                   break
+                case 'audio': {
+                  const binary = atob(data.chunk)
+                  const bytes = new Uint8Array(binary.length)
+                  for (let i = 0; i < binary.length; i++) {
+                    bytes[i] = binary.charCodeAt(i)
+                  }
+                  const blob = new Blob([bytes], { type: 'audio/mpeg' })
+                  const blobUrl = URL.createObjectURL(blob)
+                  audioQueueRef.current.push(blobUrl)
+                  setTtsProgress({
+                    current: data.index + 1,
+                    total: data.total > 0 ? data.total : data.index + 1,
+                  })
+
+                  if (!firstAudioPlayed) {
+                    firstAudioPlayed = true
+                    playNextChunk()
+                  } else if (waitingForChunkRef.current) {
+                    playNextChunk()
+                  }
+                  break
+                }
+                case 'tts_done':
+                  setTtsProgress((prev) =>
+                    prev ? { ...prev, total: data.total } : null,
+                  )
+                  ttsStreamingRef.current = false
+                  break
                 case 'error':
                   setError(data.message)
                   break
                 case 'done':
+                  if (!summaryDone) {
+                    summaryDone = true
+                    stopTimer()
+                    setLoading(false)
+                  }
                   setStatus('')
                   break
               }
             } catch (err: unknown) {
-              // Ignore malformed JSON during streaming
               if (err instanceof Error) {
                 console.error('Failed to parse streaming event:', err.message)
               }
@@ -176,12 +223,17 @@ export default function YouTubeSummarizer() {
       if (err instanceof Error && err.name !== 'AbortError') {
         setError(err.message)
       }
+      if (wantTts) {
+        handleTtsStop()
+      }
     } finally {
-      stopTimer()
-      setLoading(false)
+      if (!summaryDone) {
+        stopTimer()
+        setLoading(false)
+      }
       abortRef.current = null
     }
-  }, [url, loading])
+  }, [url, loading, playNextChunk])
 
   useEffect(() => {
     if (videoId && videoId !== lastSubmittedId.current && !loading) {
@@ -194,6 +246,9 @@ export default function YouTubeSummarizer() {
     stopTimer()
     setLoading(false)
     setStatus('')
+    if (autoTtsRef.current) {
+      handleTtsStop()
+    }
   }
 
   const handleCopy = async () => {
@@ -507,6 +562,19 @@ export default function YouTubeSummarizer() {
             placeholder="Paste a YouTube URL..."
             className="flex-1 rounded-lg border border-foreground/10 bg-foreground/5 px-4 py-2.5 text-sm outline-none transition-colors focus:border-foreground/30 placeholder:text-foreground/30"
           />
+          <button
+            onClick={() => setAutoTts((v) => !v)}
+            className={`flex items-center gap-1.5 rounded-lg border px-3 py-2.5 text-xs font-medium transition-colors ${
+              autoTts
+                ? 'border-foreground/25 bg-foreground/10 text-foreground/70'
+                : 'border-foreground/10 bg-foreground/5 text-foreground/30 hover:text-foreground/50'
+            }`}
+            aria-label="Toggle auto TTS"
+            title="Auto-play audio while summarizing"
+          >
+            <span className="text-sm">{autoTts ? '🔊' : '🔇'}</span>
+            TTS
+          </button>
           {loading && (
             <button
               onClick={handleStop}
