@@ -1,7 +1,6 @@
 'use client'
 
 import { useState, useEffect, useRef, useCallback } from 'react'
-import Link from 'next/link'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import { extractVideoId } from '@/lib/youtube-utils'
@@ -450,12 +449,6 @@ export default function YouTubeSummarizer() {
   return (
     <div className="min-h-screen bg-background text-foreground">
       <div className="mx-auto max-w-5xl px-4 py-8 sm:py-12">
-        <Link
-          href="/"
-          className="mb-6 inline-flex items-center gap-1.5 text-xs text-foreground/40 hover:text-foreground/60 transition-colors"
-        >
-          ← Back to Toolkit
-        </Link>
         <div className="mb-6">
           <h1 className="text-3xl font-bold tracking-tight">
             YouTube Summarizer
