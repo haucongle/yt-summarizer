@@ -64,6 +64,17 @@ Open [http://localhost:3000](http://localhost:3000).
 | Variable | Description |
 |----------|-------------|
 | `OPENAI_API_KEY` | OpenAI API key (required for summarization, translation, and TTS) |
+| `YOUTUBE_CHANNELS` | JSON array of favorite channels (see below) |
+
+#### `YOUTUBE_CHANNELS` format
+
+A JSON array where each entry has `name` and `url`:
+
+```env
+YOUTUBE_CHANNELS=[{"name":"Channel Name","url":"https://www.youtube.com/@handle/videos"}]
+```
+
+The `/api/channels` endpoint reads this variable and fetches the latest 5 videos from each channel using yt-dlp. If unset, the feed will be empty.
 
 ### Optional System Dependencies
 

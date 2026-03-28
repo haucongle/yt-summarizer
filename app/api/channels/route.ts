@@ -7,16 +7,16 @@ import { warn } from '@/lib/logger'
 
 const execAsync = promisify(exec)
 
-const CHANNELS = [
-  {
-    name: 'LÊ DUY CRYPTO MAN',
-    url: 'https://www.youtube.com/@L%C3%AADuyCryptoMan/streams',
-  },
-  {
-    name: 'ThuanCapital Crypto Finance',
-    url: 'https://www.youtube.com/@ThuanCapitalAnalytics/videos',
-  },
-]
+function getChannels(): { name: string; url: string }[] {
+  const raw = process.env.YOUTUBE_CHANNELS
+  if (!raw) return []
+  try {
+    return JSON.parse(raw)
+  } catch {
+    warn('Failed to parse YOUTUBE_CHANNELS env variable', { raw })
+    return []
+  }
+}
 
 interface VideoEntry {
   id: string
@@ -60,8 +60,9 @@ export async function GET() {
     ].join(PATH_SEP),
   }
 
+  const channels = getChannels()
   const results: ChannelData[] = await Promise.all(
-    CHANNELS.map(async (channel) => {
+    channels.map(async (channel) => {
       try {
         const { stdout } = await execAsync(
           `yt-dlp --playlist-end 5 -j --no-warnings "${channel.url}"`,
