@@ -119,7 +119,7 @@ export async function fetchSubtitlesWithYtDlp(
 // --- Tier 3: Audio download + parallel Whisper (slow, last resort) ---
 
 async function isCommandAvailable(cmd: string): Promise<boolean> {
-  const check = process.platform === 'win32' ? 'where' : 'which'
+  const check = process.platform === 'win32' ? 'where' : 'command -v'
   try {
     await execAsync(`${check} ${cmd}`, { env: SHELL_ENV })
     return true

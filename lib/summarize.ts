@@ -48,13 +48,23 @@ export async function fetchTranscript(
   }
 
   if (!transcript) {
-    await report(
-      'No subtitles available. Downloading audio for Whisper transcription...',
-    )
-    transcript = await transcribeWithWhisper(videoId, openai, report)
-    await report(
-      `Transcription complete (${transcript.wordCount.toLocaleString()} words)`,
-    )
+    try {
+      await report(
+        'No subtitles available. Downloading audio for Whisper transcription...',
+      )
+      transcript = await transcribeWithWhisper(videoId, openai, report)
+      await report(
+        `Transcription complete (${transcript.wordCount.toLocaleString()} words)`,
+      )
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err)
+      if (msg.includes('yt-dlp')) {
+        throw new Error(
+          `Video ${videoId} không có phụ đề. Cần yt-dlp để tải audio (không khả dụng trên Vercel). Hãy thử video khác có phụ đề.`,
+        )
+      }
+      throw err
+    }
   }
 
   return transcript
