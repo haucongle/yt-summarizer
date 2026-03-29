@@ -65,6 +65,8 @@ Open [http://localhost:3000](http://localhost:3000).
 |----------|-------------|
 | `OPENAI_API_KEY` | OpenAI API key (required for summarization, translation, and TTS) |
 | `YOUTUBE_CHANNELS` | JSON array of favorite channels (see below) |
+| `TELEGRAM_BOT_TOKEN` | Telegram bot token (GitHub Actions only) |
+| `TELEGRAM_CHAT_ID` | Telegram chat ID to receive notifications (GitHub Actions only) |
 
 #### `YOUTUBE_CHANNELS` format
 
@@ -131,3 +133,18 @@ docker run -p 7860:7860 -e OPENAI_API_KEY=sk-... toolkit
 ### Render
 
 A `render.yaml` is included for one-click deploy on Render (Docker runtime, free plan).
+
+## Telegram Daily Digest
+
+A GitHub Actions workflow sends a Telegram message every day at 8pm (GMT+7) listing new videos from your favorite channels since yesterday.
+
+### Setup
+
+1. Create a Telegram bot via [@BotFather](https://t.me/BotFather) and copy the token.
+2. Get your chat ID by messaging the bot, then calling `https://api.telegram.org/bot<TOKEN>/getUpdates`.
+3. Add these as **GitHub repository secrets** (Settings → Secrets → Actions):
+   - `YOUTUBE_CHANNELS` — same JSON array as in `.env`
+   - `TELEGRAM_BOT_TOKEN`
+   - `TELEGRAM_CHAT_ID`
+
+The workflow can also be triggered manually from the Actions tab via `workflow_dispatch`.
