@@ -10,132 +10,134 @@ jobs:
   notify:
     runs-on: ubuntu-latest
     steps:
-      - name: Install yt-dlp
-        run: pip install --quiet yt-dlp
-
       - name: Fetch videos and send to Telegram
         env:
           YOUTUBE_CHANNELS: ${{ secrets.YOUTUBE_CHANNELS }}
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
         run: |
-          #!/usr/bin/env bash
-          set -euo pipefail
+          python3 << 'PYEOF'
+          import json, os, sys, urllib.request, xml.etree.ElementTree as ET
+          from datetime import datetime, timezone, timedelta
 
-          if [[ -z "${YOUTUBE_CHANNELS:-}" || -z "${TELEGRAM_BOT_TOKEN:-}" || -z "${TELEGRAM_CHAT_ID:-}" ]]; then
-            echo "::error::Missing required secrets (YOUTUBE_CHANNELS, TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID)"
-            exit 1
-          fi
+          channels = json.loads(os.environ.get("YOUTUBE_CHANNELS", "[]"))
+          token = os.environ.get("TELEGRAM_BOT_TOKEN", "")
+          chat_id = os.environ.get("TELEGRAM_CHAT_ID", "")
 
-          API="https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}"
-          DATE_HEADER=$(date -u -d '+7 hours' '+%d %b %Y — %H:%M')
+          if not channels or not token or not chat_id:
+              print("::error::Missing required secrets")
+              sys.exit(1)
 
-          # Send header message
-          curl -s -X POST "$API/sendMessage" \
-            -H "Content-Type: application/json" \
-            -d "$(jq -n \
-              --arg chat_id "$TELEGRAM_CHAT_ID" \
-              --arg text "$(printf '📺 <b>Daily Video Digest</b>\n<i>%s (GMT+7)</i>' "$DATE_HEADER")" \
-              '{chat_id: $chat_id, text: $text, parse_mode: "HTML"}')" > /dev/null
+          API = f"https://api.telegram.org/bot{token}"
+          gmt7 = timezone(timedelta(hours=7))
+          date_header = datetime.now(gmt7).strftime("%d %b %Y — %H:%M")
 
-          CHANNEL_COUNT=$(echo "$YOUTUBE_CHANNELS" | jq length)
-          TOTAL=0
+          def tg(method, payload):
+              data = json.dumps(payload).encode()
+              req = urllib.request.Request(
+                  f"{API}/{method}",
+                  data=data,
+                  headers={"Content-Type": "application/json"},
+              )
+              try:
+                  with urllib.request.urlopen(req) as resp:
+                      return json.loads(resp.read())
+              except Exception as e:
+                  print(f"  Telegram API error: {e}")
+                  return {"ok": False}
 
-          for i in $(seq 0 $((CHANNEL_COUNT - 1))); do
-            NAME=$(echo "$YOUTUBE_CHANNELS" | jq -r ".[$i].name")
-            URL=$(echo "$YOUTUBE_CHANNELS" | jq -r ".[$i].url")
+          # Send header
+          tg("sendMessage", {
+              "chat_id": chat_id,
+              "text": f"📺 <b>Daily Video Digest</b>\n<i>{date_header} (GMT+7)</i>",
+              "parse_mode": "HTML",
+          })
 
-            echo "Fetching: $NAME"
-            VIDEOS=$(yt-dlp --playlist-end 5 -j --no-warnings "$URL" 2>/dev/null || true)
+          NS = {
+              "atom": "http://www.w3.org/2005/Atom",
+              "yt": "http://www.youtube.com/xml/schemas/2015",
+              "media": "http://search.yahoo.com/mrss/",
+          }
+          total = 0
 
-            if [[ -z "$VIDEOS" ]]; then
-              echo "  No videos found"
-              continue
-            fi
+          for ch in channels:
+              name = ch["name"]
+              channel_id = ch.get("channelId", "")
+              if not channel_id:
+                  print(f"  Skipping {name}: no channelId")
+                  continue
 
-            TEXT="<b>${NAME}</b>"
-            BUTTONS="[]"
-            COUNT=0
+              print(f"Fetching: {name}")
+              feed_url = f"https://www.youtube.com/feeds/videos.xml?channel_id={channel_id}"
 
-            while IFS= read -r line; do
-              TITLE=$(echo "$line" | jq -r '.title // "Untitled"')
-              VID=$(echo "$line" | jq -r '.id')
-              DURATION=$(echo "$line" | jq -r '.duration // 0')
-              VIEWS=$(echo "$line" | jq -r '.view_count // 0')
+              try:
+                  req = urllib.request.Request(feed_url, headers={"User-Agent": "Mozilla/5.0"})
+                  with urllib.request.urlopen(req, timeout=30) as resp:
+                      xml_data = resp.read().decode()
+              except Exception as e:
+                  print(f"  RSS fetch failed: {e}")
+                  continue
 
-              # Format duration
-              DUR_STR=""
-              if [[ "$DURATION" != "0" && "$DURATION" != "null" ]]; then
-                MINS=$((DURATION / 60))
-                SECS=$((DURATION % 60))
-                if [[ $MINS -ge 60 ]]; then
-                  HRS=$((MINS / 60))
-                  MINS=$((MINS % 60))
-                  DUR_STR=$(printf "%d:%02d:%02d" "$HRS" "$MINS" "$SECS")
-                else
-                  DUR_STR=$(printf "%d:%02d" "$MINS" "$SECS")
-                fi
-              fi
+              root = ET.fromstring(xml_data)
+              entries = root.findall("atom:entry", NS)[:5]
 
-              # Format views
-              VIEW_STR=""
-              if [[ "$VIEWS" != "0" && "$VIEWS" != "null" ]]; then
-                if [[ $VIEWS -ge 1000000 ]]; then
-                  VIEW_STR="$(echo "scale=1; $VIEWS/1000000" | bc)M"
-                elif [[ $VIEWS -ge 1000 ]]; then
-                  VIEW_STR="$(echo "scale=1; $VIEWS/1000" | bc)K"
-                else
-                  VIEW_STR="${VIEWS}"
-                fi
-              fi
+              if not entries:
+                  print("  No videos in RSS feed")
+                  continue
 
-              META=""
-              [[ -n "$DUR_STR" ]] && META="$DUR_STR"
-              [[ -n "$VIEW_STR" ]] && META="${META:+$META · }${VIEW_STR} views"
+              text = f"<b>{name}</b>"
+              buttons = []
+              count = 0
 
-              COUNT=$((COUNT + 1))
-              TEXT+="$(printf '\n\n%d. %s' "$COUNT" "$TITLE")"
-              [[ -n "$META" ]] && TEXT+="$(printf '\n   <i>%s</i>' "$META")"
+              for entry in entries:
+                  vid = entry.find("yt:videoId", NS).text
+                  title = entry.find("atom:title", NS).text or "Untitled"
 
-              # Truncate button label to 60 chars
-              BTN_LABEL="$TITLE"
-              if [[ ${#BTN_LABEL} -gt 60 ]]; then
-                BTN_LABEL="${BTN_LABEL:0:57}..."
-              fi
+                  views_el = entry.find(".//media:statistics", NS)
+                  views = int(views_el.get("views", "0")) if views_el is not None else 0
 
-              BUTTONS=$(echo "$BUTTONS" | jq \
-                --arg text "📝 $BTN_LABEL" \
-                --arg data "$VID" \
-                '. + [[{"text": $text, "callback_data": $data}]]')
+                  if views >= 1_000_000:
+                      view_str = f"{views/1_000_000:.1f}M views"
+                  elif views >= 1_000:
+                      view_str = f"{views/1_000:.1f}K views"
+                  elif views > 0:
+                      view_str = f"{views} views"
+                  else:
+                      view_str = ""
 
-            done <<< "$VIDEOS"
+                  pub_el = entry.find("atom:published", NS)
+                  pub_str = ""
+                  if pub_el is not None and pub_el.text:
+                      try:
+                          pub_dt = datetime.fromisoformat(pub_el.text.replace("Z", "+00:00"))
+                          pub_str = pub_dt.astimezone(gmt7).strftime("%d/%m")
+                      except Exception:
+                          pass
 
-            if [[ $COUNT -gt 0 ]]; then
-              PAYLOAD=$(jq -n \
-                --arg chat_id "$TELEGRAM_CHAT_ID" \
-                --arg text "$TEXT" \
-                --argjson keyboard "$BUTTONS" \
-                '{
-                  chat_id: $chat_id,
-                  text: $text,
-                  parse_mode: "HTML",
-                  disable_web_page_preview: true,
-                  reply_markup: { inline_keyboard: $keyboard }
-                }')
+                  meta_parts = [p for p in [pub_str, view_str] if p]
+                  meta = " · ".join(meta_parts)
 
-              RESPONSE=$(curl -s -X POST "$API/sendMessage" \
-                -H "Content-Type: application/json" \
-                -d "$PAYLOAD")
+                  count += 1
+                  text += f"\n\n{count}. {title}"
+                  if meta:
+                      text += f"\n   <i>{meta}</i>"
 
-              OK=$(echo "$RESPONSE" | jq -r '.ok')
-              if [[ "$OK" != "true" ]]; then
-                echo "::warning::Failed to send message for $NAME: $(echo "$RESPONSE" | jq -r '.description // "unknown error"')"
-              else
-                echo "  Sent $COUNT videos for $NAME"
-              fi
+                  btn_label = title if len(title) <= 60 else title[:57] + "..."
+                  buttons.append([{"text": f"📝 {btn_label}", "callback_data": vid}])
 
-              TOTAL=$((TOTAL + COUNT))
-            fi
-          done
+              if count > 0:
+                  result = tg("sendMessage", {
+                      "chat_id": chat_id,
+                      "text": text,
+                      "parse_mode": "HTML",
+                      "disable_web_page_preview": True,
+                      "reply_markup": {"inline_keyboard": buttons},
+                  })
+                  if result.get("ok"):
+                      print(f"  Sent {count} videos")
+                  else:
+                      print(f"  ::warning::Failed: {result}")
+                  total += count
 
-          echo "Done — sent $TOTAL video(s) total"
+          print(f"Done — sent {total} video(s) total")
+          PYEOF

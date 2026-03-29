@@ -70,13 +70,16 @@ Open [http://localhost:3000](http://localhost:3000).
 
 #### `YOUTUBE_CHANNELS` format
 
-A JSON array where each entry has `name` and `url`:
+A JSON array where each entry has `name`, `url`, and `channelId`:
 
 ```env
-YOUTUBE_CHANNELS=[{"name":"Channel Name","url":"https://www.youtube.com/@handle/videos"}]
+YOUTUBE_CHANNELS=[{"name":"Channel Name","url":"https://www.youtube.com/@handle/videos","channelId":"UCxxxxxxxx"}]
 ```
 
-The `/api/channels` endpoint reads this variable and fetches the latest 5 videos from each channel using yt-dlp. If unset, the feed will be empty.
+- `url` — used by the web app's `/api/channels` endpoint (fetches videos via yt-dlp)
+- `channelId` — used by the GitHub Action daily digest (fetches videos via YouTube RSS feed)
+
+You can find a channel's ID on [youtube.com/account_advanced](https://www.youtube.com/account_advanced) or from tools like [vidiq.com](https://vidiq.com).
 
 ### Optional System Dependencies
 
