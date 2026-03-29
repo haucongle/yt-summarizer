@@ -1,14 +1,10 @@
 import { NextRequest } from 'next/server'
 import OpenAI from 'openai'
-import {
-  extractVideoId,
-  fetchYouTubeTranscript,
-  fetchSubtitlesWithYtDlp,
-  transcribeWithWhisper,
-} from '@/lib/youtube'
+import { extractVideoId } from '@/lib/youtube'
 import { createSSEStream, createSSEResponse } from '@/lib/api-utils'
 import { MODELS, TOKENS } from '@/lib/constants'
 import { extractTtsChunk, stripMarkdown } from '@/lib/tts-utils'
+import { fetchTranscript, SUMMARIZE_INSTRUCTION } from '@/lib/summarize'
 import { error as logError } from '@/lib/logger'
 
 export const maxDuration = 300
@@ -36,36 +32,9 @@ export async function POST(req: NextRequest) {
 
   ;(async () => {
     try {
-      let transcript: { text: string; source: string; wordCount: number } | null = null
-
-      await send({ type: 'status', message: 'Fetching transcript from YouTube...' })
-      transcript = await fetchYouTubeTranscript(videoId)
-
-      if (!transcript) {
-        await send({ type: 'status', message: 'Trying yt-dlp subtitle extraction...' })
-        transcript = await fetchSubtitlesWithYtDlp(videoId)
-      }
-
-      if (transcript) {
-        await send({
-          type: 'status',
-          message: `Transcript found (${transcript.source}, ${transcript.wordCount.toLocaleString()} words)`,
-        })
-      }
-
-      if (!transcript) {
-        await send({
-          type: 'status',
-          message: 'No subtitles available. Downloading audio for Whisper transcription...',
-        })
-        transcript = await transcribeWithWhisper(videoId, openai, async (msg) => {
-          await send({ type: 'status', message: msg })
-        })
-        await send({
-          type: 'status',
-          message: `Transcription complete (${transcript.wordCount.toLocaleString()} words)`,
-        })
-      }
+      const transcript = await fetchTranscript(videoId, openai, async (msg) => {
+        await send({ type: 'status', message: msg })
+      })
 
       await send({ type: 'status', message: 'Generating summary with GPT-5.4...' })
       await send({
@@ -77,14 +46,7 @@ export async function POST(req: NextRequest) {
       const stream = await openai.responses.create({
         model: MODELS.GPT,
         reasoning: { effort: 'none' },
-        instructions: `Transcript có thể bằng tiếng Anh hoặc tiếng Việt — nhiệm vụ của bạn là dịch (nếu cần) và tóm tắt toàn bộ nội dung sang tiếng Việt.
-
-Hãy tóm tắt tự nhiên, rõ ràng. Không cần theo format cố định — tự tổ chức nội dung sao cho dễ đọc và phù hợp nhất với video.
-
-Lưu ý:
-- Viết bằng tiếng Việt
-- Giữ nguyên thuật ngữ chuyên ngành
-- Dùng markdown formatting`,
+        instructions: SUMMARIZE_INSTRUCTION,
         input: `Hãy tóm tắt transcript video sau:\n\n${transcript.text}`,
         stream: true,
         max_output_tokens: TOKENS.SUMMARIZE_MAX,

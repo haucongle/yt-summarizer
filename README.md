@@ -65,8 +65,8 @@ Open [http://localhost:3000](http://localhost:3000).
 |----------|-------------|
 | `OPENAI_API_KEY` | OpenAI API key (required for summarization, translation, and TTS) |
 | `YOUTUBE_CHANNELS` | JSON array of favorite channels (see below) |
-| `TELEGRAM_BOT_TOKEN` | Telegram bot token (GitHub Actions only) |
-| `TELEGRAM_CHAT_ID` | Telegram chat ID to receive notifications (GitHub Actions only) |
+| `TELEGRAM_BOT_TOKEN` | Telegram bot token (GitHub Actions + webhook) |
+| `TELEGRAM_CHAT_ID` | Telegram chat ID to receive notifications (GitHub Actions) |
 
 #### `YOUTUBE_CHANNELS` format
 
@@ -93,6 +93,7 @@ These are only needed for the YouTube Summarizer's fallback transcript methods:
 | POST | `/api/translate` | Text translation (SSE stream) |
 | POST | `/api/tts` | Text-to-speech — single response or `stream: true` for SSE audio chunks |
 | GET | `/api/channels` | Favorite channels feed (cached, uses yt-dlp) |
+| POST | `/api/telegram` | Telegram bot webhook (handles button clicks, sends summaries) |
 
 ## Project Structure
 
@@ -106,10 +107,13 @@ app/
     ├── summarize/route.ts
     ├── translate/route.ts
     ├── tts/route.ts
-    └── channels/route.ts
+    ├── channels/route.ts
+    └── telegram/route.ts           # Telegram bot webhook
 lib/
 ├── youtube.ts                      # Transcript extraction pipeline
 ├── youtube-utils.ts                # Video ID parsing, SRT parsing
+├── summarize.ts                    # Shared summarization logic
+├── telegram.ts                     # Telegram API helpers
 ├── api-utils.ts                    # SSE stream helpers
 ├── diff.ts                         # LCS-based line diff
 ├── constants.ts                    # Models, timeouts, limits
@@ -134,9 +138,9 @@ docker run -p 7860:7860 -e OPENAI_API_KEY=sk-... toolkit
 
 A `render.yaml` is included for one-click deploy on Render (Docker runtime, free plan).
 
-## Telegram Daily Digest
+## Telegram Bot
 
-A GitHub Actions workflow sends a Telegram message every day at 8pm (GMT+7) listing new videos from your favorite channels since yesterday.
+A daily digest + click-to-summarize Telegram bot. Every day at 8pm (GMT+7), a GitHub Action sends the latest 5 videos per channel with inline buttons. Tap a button to get a Vietnamese summary sent back to you.
 
 ### Setup
 
@@ -146,5 +150,11 @@ A GitHub Actions workflow sends a Telegram message every day at 8pm (GMT+7) list
    - `YOUTUBE_CHANNELS` — same JSON array as in `.env`
    - `TELEGRAM_BOT_TOKEN`
    - `TELEGRAM_CHAT_ID`
+4. Add `TELEGRAM_BOT_TOKEN` to the deployed app's environment variables as well.
+5. Register the webhook (one-time, replace `<TOKEN>` and `<APP_URL>`):
 
-The workflow can also be triggered manually from the Actions tab via `workflow_dispatch`.
+```bash
+curl "https://api.telegram.org/bot<TOKEN>/setWebhook?url=<APP_URL>/api/telegram"
+```
+
+The daily digest can also be triggered manually from the Actions tab via `workflow_dispatch`.

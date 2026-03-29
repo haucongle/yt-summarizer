@@ -13,7 +13,7 @@ jobs:
       - name: Install yt-dlp
         run: pip install --quiet yt-dlp
 
-      - name: Fetch recent videos and notify Telegram
+      - name: Fetch videos and send to Telegram
         env:
           YOUTUBE_CHANNELS: ${{ secrets.YOUTUBE_CHANNELS }}
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
@@ -27,35 +27,44 @@ jobs:
             exit 1
           fi
 
-          YESTERDAY=$(date -u -d "yesterday" +%Y%m%d)
-          TODAY=$(date -u +%Y%m%d)
-          echo "Fetching videos uploaded since $YESTERDAY"
+          API="https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}"
+          DATE_HEADER=$(date -u -d '+7 hours' '+%d %b %Y — %H:%M')
 
-          MESSAGE="<b>📺 Daily Video Digest</b>"$'\n'"<i>$(date -u -d '+7 hours' '+%d %b %Y — %H:%M') (GMT+7)</i>"$'\n'
-          TOTAL=0
+          # Send header message
+          curl -s -X POST "$API/sendMessage" \
+            -H "Content-Type: application/json" \
+            -d "$(jq -n \
+              --arg chat_id "$TELEGRAM_CHAT_ID" \
+              --arg text "$(printf '📺 <b>Daily Video Digest</b>\n<i>%s (GMT+7)</i>' "$DATE_HEADER")" \
+              '{chat_id: $chat_id, text: $text, parse_mode: "HTML"}')" > /dev/null
 
           CHANNEL_COUNT=$(echo "$YOUTUBE_CHANNELS" | jq length)
+          TOTAL=0
+
           for i in $(seq 0 $((CHANNEL_COUNT - 1))); do
             NAME=$(echo "$YOUTUBE_CHANNELS" | jq -r ".[$i].name")
             URL=$(echo "$YOUTUBE_CHANNELS" | jq -r ".[$i].url")
 
             echo "Fetching: $NAME"
-            VIDEOS=$(yt-dlp --dateafter "$YESTERDAY" --playlist-end 15 -j --no-warnings "$URL" 2>/dev/null || true)
+            VIDEOS=$(yt-dlp --playlist-end 5 -j --no-warnings "$URL" 2>/dev/null || true)
 
             if [[ -z "$VIDEOS" ]]; then
+              echo "  No videos found"
               continue
             fi
 
-            CHANNEL_MSG=""
+            TEXT="<b>${NAME}</b>"
+            BUTTONS="[]"
             COUNT=0
+
             while IFS= read -r line; do
               TITLE=$(echo "$line" | jq -r '.title // "Untitled"')
               VID=$(echo "$line" | jq -r '.id')
               DURATION=$(echo "$line" | jq -r '.duration // 0')
               VIEWS=$(echo "$line" | jq -r '.view_count // 0')
-              UPLOAD=$(echo "$line" | jq -r '.upload_date // ""')
 
-              # Format duration as HH:MM:SS or MM:SS
+              # Format duration
+              DUR_STR=""
               if [[ "$DURATION" != "0" && "$DURATION" != "null" ]]; then
                 MINS=$((DURATION / 60))
                 SECS=$((DURATION % 60))
@@ -66,56 +75,67 @@ jobs:
                 else
                   DUR_STR=$(printf "%d:%02d" "$MINS" "$SECS")
                 fi
-              else
-                DUR_STR=""
               fi
 
               # Format views
+              VIEW_STR=""
               if [[ "$VIEWS" != "0" && "$VIEWS" != "null" ]]; then
                 if [[ $VIEWS -ge 1000000 ]]; then
-                  VIEW_STR="$(echo "scale=1; $VIEWS/1000000" | bc)M views"
+                  VIEW_STR="$(echo "scale=1; $VIEWS/1000000" | bc)M"
                 elif [[ $VIEWS -ge 1000 ]]; then
-                  VIEW_STR="$(echo "scale=1; $VIEWS/1000" | bc)K views"
+                  VIEW_STR="$(echo "scale=1; $VIEWS/1000" | bc)K"
                 else
-                  VIEW_STR="${VIEWS} views"
+                  VIEW_STR="${VIEWS}"
                 fi
-              else
-                VIEW_STR=""
               fi
 
               META=""
               [[ -n "$DUR_STR" ]] && META="$DUR_STR"
-              [[ -n "$VIEW_STR" ]] && META="${META:+$META · }$VIEW_STR"
+              [[ -n "$VIEW_STR" ]] && META="${META:+$META · }${VIEW_STR} views"
 
-              CHANNEL_MSG+=$'\n'"  • <a href=\"https://www.youtube.com/watch?v=${VID}\">${TITLE}</a>"
-              [[ -n "$META" ]] && CHANNEL_MSG+=$'\n'"    <i>${META}</i>"
               COUNT=$((COUNT + 1))
+              TEXT+="$(printf '\n\n%d. %s' "$COUNT" "$TITLE")"
+              [[ -n "$META" ]] && TEXT+="$(printf '\n   <i>%s</i>' "$META")"
+
+              # Truncate button label to 60 chars
+              BTN_LABEL="$TITLE"
+              if [[ ${#BTN_LABEL} -gt 60 ]]; then
+                BTN_LABEL="${BTN_LABEL:0:57}..."
+              fi
+
+              BUTTONS=$(echo "$BUTTONS" | jq \
+                --arg text "📝 $BTN_LABEL" \
+                --arg data "$VID" \
+                '. + [[{"text": $text, "callback_data": $data}]]')
+
             done <<< "$VIDEOS"
 
             if [[ $COUNT -gt 0 ]]; then
-              MESSAGE+=$'\n'"<b>${NAME}</b> (${COUNT} new)"
-              MESSAGE+="$CHANNEL_MSG"$'\n'
+              PAYLOAD=$(jq -n \
+                --arg chat_id "$TELEGRAM_CHAT_ID" \
+                --arg text "$TEXT" \
+                --argjson keyboard "$BUTTONS" \
+                '{
+                  chat_id: $chat_id,
+                  text: $text,
+                  parse_mode: "HTML",
+                  disable_web_page_preview: true,
+                  reply_markup: { inline_keyboard: $keyboard }
+                }')
+
+              RESPONSE=$(curl -s -X POST "$API/sendMessage" \
+                -H "Content-Type: application/json" \
+                -d "$PAYLOAD")
+
+              OK=$(echo "$RESPONSE" | jq -r '.ok')
+              if [[ "$OK" != "true" ]]; then
+                echo "::warning::Failed to send message for $NAME: $(echo "$RESPONSE" | jq -r '.description // "unknown error"')"
+              else
+                echo "  Sent $COUNT videos for $NAME"
+              fi
+
               TOTAL=$((TOTAL + COUNT))
             fi
           done
 
-          if [[ $TOTAL -eq 0 ]]; then
-            MESSAGE+=$'\n'"No new videos since yesterday."
-          else
-            MESSAGE+=$'\n'"<b>Total: ${TOTAL} new video(s)</b>"
-          fi
-
-          # Send to Telegram
-          RESPONSE=$(curl -s -X POST "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage" \
-            -d chat_id="$TELEGRAM_CHAT_ID" \
-            -d parse_mode="HTML" \
-            -d disable_web_page_preview="true" \
-            --data-urlencode "text=$MESSAGE")
-
-          OK=$(echo "$RESPONSE" | jq -r '.ok')
-          if [[ "$OK" != "true" ]]; then
-            echo "::error::Telegram API error: $RESPONSE"
-            exit 1
-          fi
-
-          echo "Sent digest with $TOTAL video(s) to Telegram"
+          echo "Done — sent $TOTAL video(s) total"
