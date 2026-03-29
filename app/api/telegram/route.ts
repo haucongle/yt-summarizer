@@ -1,4 +1,4 @@
-import { NextRequest, after } from 'next/server'
+import { NextRequest } from 'next/server'
 import { summarizeVideo } from '@/lib/summarize'
 import {
   answerCallbackQuery,
@@ -28,6 +28,8 @@ export async function POST(req: NextRequest) {
     return Response.json({ error: 'Invalid JSON' }, { status: 400 })
   }
 
+  logger.info('Telegram webhook received', { hasCallback: !!body.callback_query, hasMessage: !!body.message })
+
   // Handle callback_query (inline button clicks)
   if (body.callback_query) {
     const cb = body.callback_query as {
@@ -52,9 +54,7 @@ export async function POST(req: NextRequest) {
     )
     const placeholderMsgId = placeholderRes.result?.message_id
 
-    after(async () => {
-      await summarizeAndReply(chatId, videoId, placeholderMsgId)
-    })
+    await summarizeAndReply(chatId, videoId, placeholderMsgId)
 
     return Response.json({ ok: true })
   }
@@ -77,9 +77,7 @@ export async function POST(req: NextRequest) {
         )
         const placeholderMsgId = placeholderRes.result?.message_id
 
-        after(async () => {
-          await summarizeAndReply(msg.chat.id, videoId, placeholderMsgId)
-        })
+        await summarizeAndReply(msg.chat.id, videoId, placeholderMsgId)
       }
     }
 
