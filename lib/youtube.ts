@@ -116,12 +116,85 @@ export async function fetchSubtitlesWithYtDlp(
   }
 }
 
+// --- Tier 2.5: youtubei.js audio download + Whisper (serverless-compatible) ---
+
+export async function transcribeWithYoutubeJs(
+  videoId: string,
+  openai: OpenAI,
+  onProgress: (message: string) => Promise<void>,
+): Promise<TranscriptResult> {
+  const { Innertube, UniversalCache, Utils } = await import('youtubei.js')
+
+  await onProgress('Downloading audio via youtubei.js...')
+  const yt = await Innertube.create({ cache: new UniversalCache(false), generate_session_locally: true })
+
+  const stream = await yt.download(videoId, {
+    type: 'audio',
+    quality: 'bestefficiency',
+  })
+
+  const chunks: Uint8Array[] = []
+  for await (const chunk of Utils.streamToIterable(stream)) {
+    chunks.push(chunk)
+  }
+  const buffer = Buffer.concat(chunks)
+  const sizeMB = buffer.length / (1024 * 1024)
+  await onProgress(`Audio downloaded (${sizeMB.toFixed(1)} MB)`)
+
+  if (sizeMB <= AUDIO.MAX_SINGLE_FILE_MB) {
+    await onProgress('Transcribing with Whisper...')
+    const file = new File([new Uint8Array(buffer)], 'audio.webm', { type: 'audio/webm' })
+    const response = await openai.audio.transcriptions.create({
+      file,
+      model: MODELS.WHISPER,
+      language: 'vi',
+    })
+    return {
+      text: response.text,
+      source: 'whisper',
+      wordCount: response.text.split(/\s+/).length,
+    }
+  }
+
+  // Split large files into ~24MB chunks
+  const chunkSize = AUDIO.MAX_SINGLE_FILE_MB * 1024 * 1024
+  const audioChunks: Buffer[] = []
+  for (let offset = 0; offset < buffer.length; offset += chunkSize) {
+    audioChunks.push(buffer.subarray(offset, offset + chunkSize))
+  }
+
+  await onProgress(
+    `Transcribing ${audioChunks.length} chunks (${AUDIO.WHISPER_CONCURRENCY} in parallel)...`,
+  )
+
+  const transcripts = await parallelMap(
+    audioChunks,
+    async (chunk, idx) => {
+      const file = new File([new Uint8Array(chunk)], `chunk_${idx}.webm`, { type: 'audio/webm' })
+      const response = await openai.audio.transcriptions.create({
+        file,
+        model: MODELS.WHISPER,
+        language: 'vi',
+      })
+      await onProgress(`Transcribed ${idx + 1}/${audioChunks.length}`)
+      return response.text
+    },
+    AUDIO.WHISPER_CONCURRENCY,
+  )
+
+  const fullText = transcripts.join('\n\n')
+  return {
+    text: fullText,
+    source: 'whisper',
+    wordCount: fullText.split(/\s+/).length,
+  }
+}
+
 // --- Tier 3: Audio download + parallel Whisper (slow, last resort) ---
 
 async function isCommandAvailable(cmd: string): Promise<boolean> {
-  const check = process.platform === 'win32' ? 'where' : 'command -v'
   try {
-    await execAsync(`${check} ${cmd}`, { env: SHELL_ENV })
+    await execAsync(`${cmd} --version`, { env: SHELL_ENV, timeout: 10_000 })
     return true
   } catch (error) {
     logger.debug('Command not available', {

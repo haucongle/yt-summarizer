@@ -2,6 +2,7 @@ import OpenAI from 'openai'
 import {
   fetchYouTubeTranscript,
   fetchSubtitlesWithYtDlp,
+  transcribeWithYoutubeJs,
   transcribeWithWhisper,
 } from '@/lib/youtube'
 import { MODELS, TOKENS } from '@/lib/constants'
@@ -49,22 +50,25 @@ export async function fetchTranscript(
 
   if (!transcript) {
     try {
-      await report(
-        'No subtitles available. Downloading audio for Whisper transcription...',
-      )
-      transcript = await transcribeWithWhisper(videoId, openai, report)
+      await report('No subtitles available. Trying youtubei.js audio download...')
+      transcript = await transcribeWithYoutubeJs(videoId, openai, report)
       await report(
         `Transcription complete (${transcript.wordCount.toLocaleString()} words)`,
       )
     } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err)
-      if (msg.includes('yt-dlp')) {
-        throw new Error(
-          `Video ${videoId} không có phụ đề. Cần yt-dlp để tải audio (không khả dụng trên Vercel). Hãy thử video khác có phụ đề.`,
-        )
-      }
-      throw err
+      logger.warn('youtubei.js transcription failed, falling back to yt-dlp', {
+        videoId,
+        error: err instanceof Error ? err.message : String(err),
+      })
     }
+  }
+
+  if (!transcript) {
+    await report('Trying yt-dlp audio download + Whisper...')
+    transcript = await transcribeWithWhisper(videoId, openai, report)
+    await report(
+      `Transcription complete (${transcript.wordCount.toLocaleString()} words)`,
+    )
   }
 
   return transcript
