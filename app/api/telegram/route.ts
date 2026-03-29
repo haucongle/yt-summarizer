@@ -28,7 +28,13 @@ export async function POST(req: NextRequest) {
     return Response.json({ error: 'Invalid JSON' }, { status: 400 })
   }
 
-  logger.info('Telegram webhook received', { hasCallback: !!body.callback_query, hasMessage: !!body.message })
+  const bodyKeys = Object.keys(body)
+  logger.info('Telegram webhook received', {
+    keys: bodyKeys,
+    hasCallback: !!body.callback_query,
+    hasMessage: !!body.message,
+    raw: JSON.stringify(body).substring(0, 500),
+  })
 
   // Handle callback_query (inline button clicks)
   if (body.callback_query) {
