@@ -85,13 +85,17 @@ jobs:
                   print("  No videos in RSS feed")
                   continue
 
-              text = f"<b>{name}</b>"
-              buttons = []
-              count = 0
+              tg("sendMessage", {
+                  "chat_id": chat_id,
+                  "text": f"<b>{name}</b>",
+                  "parse_mode": "HTML",
+              })
 
+              count = 0
               for entry in entries:
                   vid = entry.find("yt:videoId", NS).text
                   title = entry.find("atom:title", NS).text or "Untitled"
+                  thumb = f"https://img.youtube.com/vi/{vid}/hqdefault.jpg"
 
                   views_el = entry.find(".//media:statistics", NS)
                   views = int(views_el.get("views", "0")) if views_el is not None else 0
@@ -117,26 +121,28 @@ jobs:
                   meta_parts = [p for p in [pub_str, view_str] if p]
                   meta = " · ".join(meta_parts)
 
-                  count += 1
-                  text += f"\n\n{count}. {title}"
+                  caption = f"<b>{title}</b>"
                   if meta:
-                      text += f"\n   <i>{meta}</i>"
+                      caption += f"\n<i>{meta}</i>"
 
-                  btn_label = title if len(title) <= 60 else title[:57] + "..."
-                  buttons.append([{"text": f"📝 {btn_label}", "callback_data": vid}])
-
-              if count > 0:
-                  result = tg("sendMessage", {
+                  btn_label = "📝 Summarize"
+                  result = tg("sendPhoto", {
                       "chat_id": chat_id,
-                      "text": text,
+                      "photo": thumb,
+                      "caption": caption,
                       "parse_mode": "HTML",
-                      "disable_web_page_preview": True,
-                      "reply_markup": {"inline_keyboard": buttons},
+                      "reply_markup": {"inline_keyboard": [[
+                          {"text": btn_label, "callback_data": vid},
+                          {"text": "▶️ Watch", "url": f"https://www.youtube.com/watch?v={vid}"},
+                      ]]},
                   })
                   if result.get("ok"):
-                      print(f"  Sent {count} videos")
+                      count += 1
                   else:
-                      print(f"  ::warning::Failed: {result}")
+                      print(f"  Failed to send video {vid}: {result}")
+
+              if count > 0:
+                  print(f"  Sent {count} videos")
                   total += count
 
           print(f"Done — sent {total} video(s) total")

@@ -1,4 +1,4 @@
-import { NextRequest } from 'next/server'
+import { NextRequest, after } from 'next/server'
 import { summarizeVideo } from '@/lib/summarize'
 import {
   answerCallbackQuery,
@@ -38,7 +38,6 @@ export async function POST(req: NextRequest) {
 
     const videoId = cb.data
     const chatId = cb.message?.chat.id
-    const messageId = cb.message?.message_id
 
     if (!videoId || !chatId) {
       return Response.json({ ok: true })
@@ -53,12 +52,8 @@ export async function POST(req: NextRequest) {
     )
     const placeholderMsgId = placeholderRes.result?.message_id
 
-    // Run summarization in background, respond to Telegram immediately
-    summarizeAndReply(chatId, videoId, placeholderMsgId).catch((err) => {
-      logger.error('Background summarization failed', {
-        videoId,
-        error: err instanceof Error ? err.message : String(err),
-      })
+    after(async () => {
+      await summarizeAndReply(chatId, videoId, placeholderMsgId)
     })
 
     return Response.json({ ok: true })
@@ -82,14 +77,9 @@ export async function POST(req: NextRequest) {
         )
         const placeholderMsgId = placeholderRes.result?.message_id
 
-        summarizeAndReply(msg.chat.id, videoId, placeholderMsgId).catch(
-          (err) => {
-            logger.error('Background summarization failed', {
-              videoId,
-              error: err instanceof Error ? err.message : String(err),
-            })
-          },
-        )
+        after(async () => {
+          await summarizeAndReply(msg.chat.id, videoId, placeholderMsgId)
+        })
       }
     }
 
