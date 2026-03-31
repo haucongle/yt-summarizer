@@ -58,6 +58,7 @@ jobs:
               "yt": "http://www.youtube.com/xml/schemas/2015",
               "media": "http://search.yahoo.com/mrss/",
           }
+          cutoff = datetime.now(timezone.utc) - timedelta(hours=24)
           total = 0
 
           for ch in channels:
@@ -79,10 +80,26 @@ jobs:
                   continue
 
               root = ET.fromstring(xml_data)
-              entries = root.findall("atom:entry", NS)[:5]
+              entries = root.findall("atom:entry", NS)
 
               if not entries:
                   print("  No videos in RSS feed")
+                  continue
+
+              recent = []
+              for entry in entries:
+                  pub_el = entry.find("atom:published", NS)
+                  if pub_el is None or not pub_el.text:
+                      continue
+                  try:
+                      pub_dt = datetime.fromisoformat(pub_el.text.replace("Z", "+00:00"))
+                  except Exception:
+                      continue
+                  if pub_dt >= cutoff:
+                      recent.append((entry, pub_dt))
+
+              if not recent:
+                  print(f"  No videos in the last 24h for {name}")
                   continue
 
               tg("sendMessage", {
@@ -92,7 +109,7 @@ jobs:
               })
 
               count = 0
-              for entry in entries:
+              for entry, pub_dt in recent:
                   vid = entry.find("yt:videoId", NS).text
                   title = entry.find("atom:title", NS).text or "Untitled"
                   thumb = f"https://img.youtube.com/vi/{vid}/hqdefault.jpg"
@@ -109,14 +126,7 @@ jobs:
                   else:
                       view_str = ""
 
-                  pub_el = entry.find("atom:published", NS)
-                  pub_str = ""
-                  if pub_el is not None and pub_el.text:
-                      try:
-                          pub_dt = datetime.fromisoformat(pub_el.text.replace("Z", "+00:00"))
-                          pub_str = pub_dt.astimezone(gmt7).strftime("%d/%m")
-                      except Exception:
-                          pass
+                  pub_str = pub_dt.astimezone(gmt7).strftime("%d/%m %H:%M")
 
                   meta_parts = [p for p in [pub_str, view_str] if p]
                   meta = " · ".join(meta_parts)
@@ -144,6 +154,12 @@ jobs:
               if count > 0:
                   print(f"  Sent {count} videos")
                   total += count
+
+          if total == 0:
+              tg("sendMessage", {
+                  "chat_id": chat_id,
+                  "text": "No new videos in the last 24 hours.",
+              })
 
           print(f"Done — sent {total} video(s) total")
           PYEOF
