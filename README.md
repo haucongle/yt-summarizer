@@ -7,45 +7,28 @@ sdk: docker
 app_port: 7860
 ---
 
-# Toolkit
+# YT Summarizer
 
-A personal productivity toolkit built with Next.js 16 and the OpenAI API. Three tools accessible from a single hub.
+A YouTube video summarizer that generates Vietnamese summaries with streaming TTS, powered by Next.js 16 and the OpenAI API.
 
-## Tools
+## Features
 
-### YouTube Summarizer
-
-Paste a YouTube link and get a Vietnamese summary streamed in real time.
-
-- **Transcript fallback chain**: `youtube-transcript` npm package (Vietnamese → auto-generated) → `yt-dlp` subtitles → `yt-dlp` audio download + Whisper transcription (with ffmpeg chunking for large files)
-- **Streaming TTS**: audio chunks play as they generate via SSE — no waiting for the full file
+- **Transcript fallback chain**: `youtube-transcript` (Vietnamese → auto-generated) → `youtubei.js` + Whisper → `yt-dlp` subtitles → `yt-dlp` audio + ffmpeg chunking + Whisper
+- **Streaming summary**: SSE-streamed Vietnamese markdown summary via GPT-5.4
+- **Streaming TTS**: audio chunks play as they generate — no waiting for the full file
 - **Favorite Channels feed**: latest videos from configured channels, cached 15 minutes
+- **Telegram integration**: daily digest of new videos + tap-to-summarize inline buttons
 - Playback controls: pause/resume, stop, speed (1x / 1.25x / 1.5x / 2x)
-
-### Translator
-
-English (Singaporean) ↔ Vietnamese translation with auto-translate on typing.
-
-- Three temperature presets: Precise (0), Balanced (0.5), Creative (1)
-- Streaming output, swap languages, TTS for both sides, copy
-
-### Diff Checker
-
-Client-side line diff between two text blocks or files.
-
-- Side-by-side view with line numbers
-- Added / removed / unchanged stats
-- File upload support
 
 ## Tech Stack
 
 | Layer | Technology |
 |-------|------------|
-| Framework | Next.js 16, React 19, TypeScript 5.9 |
+| Framework | Next.js 16, React 19, TypeScript 6 |
 | Styling | Tailwind CSS 4, Geist font |
 | AI | OpenAI SDK 6 (GPT-5.4, Whisper, TTS) |
 | Markdown | react-markdown, remark-gfm |
-| Transcripts | youtube-transcript, yt-dlp, ffmpeg |
+| Transcripts | youtube-transcript, youtubei.js, yt-dlp, ffmpeg |
 | Testing | Bun test |
 | Runtime | Node.js 22 (Docker) |
 
@@ -63,10 +46,10 @@ Open [http://localhost:3000](http://localhost:3000).
 
 | Variable | Description |
 |----------|-------------|
-| `OPENAI_API_KEY` | OpenAI API key (required for summarization, translation, and TTS) |
+| `OPENAI_API_KEY` | OpenAI API key (required for summarization and TTS) |
 | `YOUTUBE_CHANNELS` | JSON array of favorite channels (see below) |
 | `TELEGRAM_BOT_TOKEN` | Telegram bot token (GitHub Actions + webhook) |
-| `TELEGRAM_CHAT_ID` | Telegram chat ID to receive notifications (GitHub Actions) |
+| `TELEGRAM_CHAT_ID` | Telegram chat ID to receive daily digest (GitHub Actions) |
 
 #### `YOUTUBE_CHANNELS` format
 
@@ -83,9 +66,9 @@ You can find a channel's ID on [youtube.com/account_advanced](https://www.youtub
 
 ### Optional System Dependencies
 
-These are only needed for the YouTube Summarizer's fallback transcript methods:
+These are only needed for the fallback transcript methods:
 
-- **yt-dlp** — subtitle/audio extraction when the npm transcript package fails
+- **yt-dlp** — subtitle/audio extraction when the npm transcript packages fail
 - **ffmpeg** — splitting large audio files before Whisper transcription
 
 ## API Routes
@@ -93,7 +76,6 @@ These are only needed for the YouTube Summarizer's fallback transcript methods:
 | Method | Endpoint | Description |
 |--------|----------|-------------|
 | POST | `/api/summarize` | YouTube video summarization (SSE stream) |
-| POST | `/api/translate` | Text translation (SSE stream) |
 | POST | `/api/tts` | Text-to-speech — single response or `stream: true` for SSE audio chunks |
 | GET | `/api/channels` | Favorite channels feed (cached, uses yt-dlp) |
 | POST | `/api/telegram` | Telegram bot webhook (handles button clicks, sends summaries) |
@@ -102,13 +84,10 @@ These are only needed for the YouTube Summarizer's fallback transcript methods:
 
 ```
 app/
-├── page.tsx                        # Home hub
-├── youtube-summarizer/page.tsx
-├── translator/page.tsx
-├── diff-checker/page.tsx
+├── page.tsx                        # Redirects to /youtube-summarizer
+├── youtube-summarizer/page.tsx     # Main UI
 └── api/
     ├── summarize/route.ts
-    ├── translate/route.ts
     ├── tts/route.ts
     ├── channels/route.ts
     └── telegram/route.ts           # Telegram bot webhook
@@ -118,7 +97,7 @@ lib/
 ├── summarize.ts                    # Shared summarization logic
 ├── telegram.ts                     # Telegram API helpers
 ├── api-utils.ts                    # SSE stream helpers
-├── diff.ts                         # LCS-based line diff
+├── tts-utils.ts                    # TTS chunking and streaming
 ├── constants.ts                    # Models, timeouts, limits
 ├── formatters.ts                   # Duration, views, dates
 ├── logger.ts                       # Structured logging
@@ -133,8 +112,8 @@ lib/
 The included multi-stage `Dockerfile` installs yt-dlp, ffmpeg, and produces a standalone Next.js build. Runs on port 7860.
 
 ```bash
-docker build -t toolkit .
-docker run -p 7860:7860 -e OPENAI_API_KEY=sk-... toolkit
+docker build -t yt-summarizer .
+docker run -p 7860:7860 -e OPENAI_API_KEY=sk-... yt-summarizer
 ```
 
 ### Render
@@ -143,7 +122,7 @@ A `render.yaml` is included for one-click deploy on Render (Docker runtime, free
 
 ## Telegram Bot
 
-A daily digest + click-to-summarize Telegram bot. Every day at 8pm (GMT+7), a GitHub Action sends the latest 5 videos per channel with inline buttons. Tap a button to get a Vietnamese summary sent back to you.
+A daily digest + click-to-summarize Telegram bot. Every day at 8 PM (GMT+7), a GitHub Action sends videos published in the last 24 hours per channel with inline buttons. Tap a button to get a Vietnamese summary sent back to you.
 
 ### Setup
 
