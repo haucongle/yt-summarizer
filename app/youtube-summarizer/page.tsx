@@ -24,6 +24,8 @@ interface ChannelData {
 }
 
 export default function YouTubeSummarizer() {
+  const [mounted, setMounted] = useState(false)
+  useEffect(() => setMounted(true), [])
   const [url, setUrl] = useState('')
   const [loading, setLoading] = useState(false)
   const [status, setStatus] = useState('')
@@ -445,6 +447,23 @@ export default function YouTubeSummarizer() {
       audioQueueRef.current = []
     }
   }, [])
+
+  if (!mounted) {
+    return (
+      <div className="min-h-screen bg-background text-foreground">
+        <div className="mx-auto max-w-5xl px-4 py-8 sm:py-12">
+          <div className="mb-6">
+            <h1 className="text-3xl font-bold tracking-tight">
+              YouTube Summarizer
+            </h1>
+            <p className="mt-2 text-sm text-foreground/60">
+              Pick a video or paste a URL to get a summary in Vietnamese.
+            </p>
+          </div>
+        </div>
+      </div>
+    )
+  }
 
   return (
     <div className="min-h-screen bg-background text-foreground">
