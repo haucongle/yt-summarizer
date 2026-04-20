@@ -9,6 +9,11 @@ export const maxDuration = 120
 
 const STREAM_CONCURRENCY = 3
 
+const TTS_MODEL = 'gpt-4o-mini-tts'
+const TTS_VOICE = 'shimmer'
+const TTS_INSTRUCTIONS =
+  'Speak in natural, fluent Vietnamese with correct tones (dấu sắc, huyền, hỏi, ngã, nặng). Use a warm, clear, conversational delivery.'
+
 function createStreamingResponse(chunks: string[], openai: OpenAI) {
   const encoder = new TextEncoder()
 
@@ -26,7 +31,13 @@ function createStreamingResponse(chunks: string[], openai: OpenAI) {
           pending.set(
             i,
             openai.audio.speech
-              .create({ model: 'tts-1', voice: 'nova', input: chunks[i], response_format: 'mp3' })
+              .create({
+                model: TTS_MODEL,
+                voice: TTS_VOICE,
+                input: chunks[i],
+                instructions: TTS_INSTRUCTIONS,
+                response_format: 'mp3',
+              })
               .then((r) => r.arrayBuffer()),
           )
         }
@@ -87,9 +98,10 @@ export async function POST(req: NextRequest) {
     const audioBuffers: ArrayBuffer[] = await Promise.all(
       chunks.map(async (chunk) => {
         const response = await openai.audio.speech.create({
-          model: 'tts-1',
-          voice: 'nova',
+          model: TTS_MODEL,
+          voice: TTS_VOICE,
           input: chunk,
+          instructions: TTS_INSTRUCTIONS,
           response_format: 'mp3',
         })
         return response.arrayBuffer()
