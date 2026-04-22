@@ -65,7 +65,7 @@ export async function GET() {
     channels.map(async (channel) => {
       try {
         const { stdout } = await execAsync(
-          `yt-dlp --flat-playlist --playlist-end 5 -j --no-warnings "${channel.url}"`,
+          `yt-dlp --flat-playlist --extractor-args "youtubetab:approximate_date" --playlist-end 5 -j --no-warnings "${channel.url}"`,
           { timeout: YT_DLP_TIMEOUT, env, maxBuffer: YT_DLP_MAX_BUFFER },
         )
         const lines = stdout.trim().split('\n').filter(Boolean)
